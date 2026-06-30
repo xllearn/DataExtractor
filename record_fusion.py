@@ -52,6 +52,14 @@ def _direct_field_evidence(record: Dict[str, Any], field_mapping: FieldMapping) 
     return evidence
 
 
+def _direct_row(record: Dict[str, Any], field_mapping: FieldMapping) -> Dict[str, Any]:
+    return {
+        field: value
+        for field, value in (record.get("_direct_fields") or {}).items()
+        if field in field_mapping.headers and _meaningful(value)
+    }
+
+
 def _mark_chosen(evidence: List[Dict[str, Any]], chosen_rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     marked: List[Dict[str, Any]] = []
     chosen_pairs = {(field, str(value)) for row in chosen_rows for field, value in row.items() if _meaningful(value)}
@@ -94,6 +102,11 @@ def _merge_row(
                         "reason": f"{chosen_source[field]} 优先于 {source}，保留高优先级值",
                         "rule_source": chosen_source[field],
                         "llm_source": source,
+                        "source_a": chosen_source[field],
+                        "value_a": chosen[field],
+                        "source_b": source,
+                        "value_b": value,
+                        "chosen_source": chosen_source[field],
                     }
                 )
 
@@ -123,12 +136,13 @@ def fuse_record_sources(
     conflicts: List[Dict[str, Any]] = []
     for index, _base_row in enumerate(base):
         source_rows = [
+            ("database_direct", _direct_row(record, field_mapping)),
             ("table", aligned_table[index] if index < len(aligned_table) else {}),
             ("text_rule", aligned_text[index] if index < len(aligned_text) else {}),
             ("llm", aligned_llm[index] if index < len(aligned_llm) else {}),
         ]
         if base_source == "llm":
-            source_rows = [("llm", aligned_llm[index] if index < len(aligned_llm) else {})]
+            source_rows = [("database_direct", _direct_row(record, field_mapping)), ("llm", aligned_llm[index] if index < len(aligned_llm) else {})]
         row, row_conflicts = _merge_row(record, source_rows, field_mapping, index + 1)
         fused_rows.append(row)
         conflicts.extend(row_conflicts)
@@ -141,8 +155,11 @@ def fuse_record_sources(
     ]
     review_reasons: List[str] = []
     if conflicts:
-        fields = "、".join(sorted({item["field"] for item in conflicts}))
-        review_reasons.append(f"规则结果与 LLM 结果存在冲突：{fields}")
+        details = "、".join(
+            f"{item['field']}({item['source_a']}={item['value_a']}, {item['source_b']}={item['value_b']})"
+            for item in conflicts
+        )
+        review_reasons.append(f"不同来源字段存在冲突：{details}")
     if (table_records or text_rule_records) and llm_records and len(base) != len(llm_records):
         review_reasons.append("规则记录和 LLM 记录数量不一致，需要人工复核")
 

@@ -49,6 +49,31 @@ class RecordFusionTests(unittest.TestCase):
         self.assertIn("报销比例", result.review_reason)
         self.assertEqual(result.conflict_evidence[0]["field"], "报销比例")
         self.assertEqual(result.conflict_evidence[0]["chosen_value"], "80%")
+        self.assertEqual(result.conflict_evidence[0]["source_a"], "table")
+        self.assertEqual(result.conflict_evidence[0]["value_a"], "80%")
+        self.assertEqual(result.conflict_evidence[0]["source_b"], "llm")
+        self.assertEqual(result.conflict_evidence[0]["value_b"], "70%")
+        self.assertEqual(result.conflict_evidence[0]["chosen_source"], "table")
+        self.assertIn("table=80%", result.review_reason)
+
+    def test_database_direct_vs_table_conflict_has_generic_fields(self):
+        from field_mapping import load_field_mapping
+        from record_fusion import fuse_record_sources
+
+        result = fuse_record_sources(
+            record={"_direct_fields": {"报销比例": "90%"}},
+            table_records=[{"报销比例": "80%"}],
+            text_rule_records=[],
+            llm_records=[],
+            table_evidence=[],
+            text_rule_evidence=[],
+            llm_evidence=[],
+            field_mapping=load_field_mapping(None),
+        )
+
+        self.assertEqual(result.records[0]["报销比例"], "90%")
+        self.assertEqual(result.conflict_evidence[0]["source_a"], "database_direct")
+        self.assertEqual(result.conflict_evidence[0]["source_b"], "table")
 
     def test_uses_llm_records_when_rules_are_empty(self):
         from field_mapping import load_field_mapping

@@ -50,6 +50,34 @@ class ExcelMultiSheetTests(unittest.TestCase):
         self.assertEqual(wb["抽取评估"]["F2"].value, 80)
         self.assertEqual(wb["失败记录"]["A2"].value, "process_record")
 
+    def test_template_extra_sheet_is_preserved_and_formula_values_are_escaped(self):
+        from excel_writer import write_extraction_workbook
+        from field_mapping import load_field_mapping
+        from openpyxl import Workbook
+
+        with tempfile.TemporaryDirectory() as tmp:
+            template = Path(tmp) / "template.xlsx"
+            wb = Workbook()
+            ws = wb.active
+            ws.title = "说明"
+            ws["A1"] = "keep me"
+            wb.save(template)
+
+            output = Path(tmp) / "out.xlsx"
+            write_extraction_workbook(
+                result_rows=[{"报销比例": "=1+1"}],
+                output_path=output,
+                template_path=template,
+                field_mapping=load_field_mapping(None),
+                field_evidence=[{"field": "报销比例", "value": "+SUM(A1:A2)"}],
+            )
+            out = load_workbook(output)
+
+        self.assertIn("说明", out.sheetnames)
+        self.assertEqual(out["说明"]["A1"].value, "keep me")
+        self.assertEqual(out["结果数据"]["S2"].value, "'=1+1")
+        self.assertEqual(out["字段证据"]["F2"].value, "'+SUM(A1:A2)")
+
 
 if __name__ == "__main__":
     unittest.main()

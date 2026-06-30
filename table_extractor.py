@@ -3,6 +3,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Sequence
 
 import yaml
+from yaml import YAMLError
 from bs4 import BeautifulSoup
 
 from config import PROJECT_ROOT
@@ -29,13 +30,27 @@ class TableMapping:
         return mapping
 
 
+class TableMappingError(ValueError):
+    pass
+
+
+def _clamp_confidence(value) -> float:
+    try:
+        return max(0.0, min(1.0, float(value)))
+    except Exception:
+        return 0.85
+
+
 def load_table_mapping(path: str | Path | None = None) -> TableMapping:
     config_path = Path(path) if path else PROJECT_ROOT / "config" / "table_mapping.yml"
     if not config_path.is_absolute():
         config_path = PROJECT_ROOT / config_path
     if not config_path.exists():
         return TableMapping()
-    payload = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+    try:
+        payload = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+    except YAMLError as exc:
+        raise TableMappingError(f"表格配置 YAML 解析失败: {exc}") from exc
     aliases = {key: list(value) for key, value in ALIASES.items()}
     for header, values in (payload.get("header_aliases") or {}).items():
         aliases[str(header)] = [str(value) for value in values or []]
@@ -43,7 +58,7 @@ def load_table_mapping(path: str | Path | None = None) -> TableMapping:
     return TableMapping(
         header_aliases=aliases,
         source=str(defaults.get("source", "table_rule")),
-        confidence=float(defaults.get("confidence", 0.85)),
+        confidence=_clamp_confidence(defaults.get("confidence", 0.85)),
     )
 
 

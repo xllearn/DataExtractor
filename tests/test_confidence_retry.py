@@ -62,6 +62,28 @@ class ConfidenceScoringTests(unittest.TestCase):
 
 
 class RetryFlowTests(unittest.TestCase):
+    def test_retry_attempt_selection_keeps_initial_when_retry_is_worse(self):
+        from main import choose_final_attempt
+
+        self.assertEqual(
+            choose_final_attempt(
+                initial_score=72,
+                retry_score=60,
+                retry_parse_error="",
+                retry_rows=[{"报销比例": "50%"}],
+            ),
+            "initial",
+        )
+        self.assertEqual(
+            choose_final_attempt(
+                initial_score=62,
+                retry_score=70,
+                retry_parse_error="",
+                retry_rows=[{"报销比例": "80%"}],
+            ),
+            "ocr_retry",
+        )
+
     def test_low_confidence_first_pass_retries_with_ocr_and_logs_eval(self):
         from image_ocr import OcrSummary
         from main import extract_record_rows
@@ -136,6 +158,43 @@ class RetryFlowTests(unittest.TestCase):
             self.assertIn("confidence_score", payloads[0])
             self.assertTrue(payloads[0]["should_retry_with_ocr"])
             self.assertIn("ocr_retry", {payload["attempt"] for payload in payloads})
+
+    def test_ocr_failure_path_still_saves_intermediate_payload(self):
+        from image_ocr import OcrSummary
+        from main import extract_record_rows
+
+        class FakeLLM:
+            def extract(self, prompt):
+                return json.dumps([{"类型": "其他"}], ensure_ascii=False)
+
+        def fake_ocr(image_urls, temp_dir, record_index, enabled=True, logger=None):
+            return OcrSummary(text="", success_count=0, failure_count=len(image_urls))
+
+        record = {
+            "Title": "待遇图解",
+            "AuditTime": "2025-05-20",
+            "Content": '<p>详见下图。</p><img src="https://example.com/a.jpg" />',
+        }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            rows = extract_record_rows(
+                record=record,
+                record_index=1,
+                llm_client=FakeLLM(),
+                logs_dir=Path(tmp),
+                temp_images_dir=Path(tmp) / "images",
+                today="20260602",
+                image_base_url="",
+                ocr_enabled=True,
+                debug=False,
+                logger=None,
+                save_intermediate=True,
+                ocr_func=fake_ocr,
+            )
+            intermediate_files = list((Path(tmp) / "intermediate").glob("*.json"))
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(len(intermediate_files), 1)
 
 
 if __name__ == "__main__":

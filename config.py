@@ -81,6 +81,13 @@ def build_arg_parser(settings: Settings) -> argparse.ArgumentParser:
     parser.add_argument("--no-llm", action="store_true")
     parser.add_argument("--input-xlsx", default="")
     parser.add_argument("--output-dir", default=str(settings.output_dir))
+    parser.add_argument("--log-dir", default="logs")
+    parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--max-record-errors", type=int, default=20)
+    parser.add_argument("--fail-fast", action="store_true")
+    parser.add_argument("--strict-config", action="store_true")
+    parser.add_argument("--no-excel", action="store_true")
+    parser.add_argument("--save-intermediate", action="store_true")
     parser.add_argument("--no-ocr", action="store_true")
     parser.add_argument("--debug", action="store_true")
     return parser

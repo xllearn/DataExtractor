@@ -1,5 +1,7 @@
+import json
 import logging
 import sys
+import time
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -21,6 +23,7 @@ from prompts import build_extract_prompt
 from prompts_v2 import build_extract_prompt_v2
 from record_fusion import fuse_record_sources
 from rule_extractor import extract_key_value_records
+from security_utils import mask_sensitive_text
 from table_extractor import extract_table_records, load_table_mapping
 from utils import append_jsonl, ensure_dir, today_yyyymmdd
 
@@ -36,6 +39,36 @@ def resolve_effective_limit(args_limit: int | None, settings, db_config=None, co
 def validate_keyword_supported(keyword: str, configured_db_enabled: bool) -> None:
     if keyword and not configured_db_enabled:
         raise ValueError("--keyword 需要启用 config/db_config.yml 配置化数据库读取；旧 db.py 模式暂不支持关键词检索")
+
+
+def resolve_runtime_flags(dry_run: bool, no_llm: bool, no_ocr: bool, no_excel: bool) -> Dict[str, bool]:
+    return {
+        "no_llm": bool(no_llm or dry_run),
+        "no_ocr": bool(no_ocr or dry_run or no_llm),
+        "no_excel": bool(no_excel or dry_run),
+    }
+
+
+def should_stop_processing(record_error_count: int, max_record_errors: int, fail_fast: bool) -> bool:
+    if fail_fast and record_error_count > 0:
+        return True
+    return record_error_count >= max_record_errors
+
+
+def validate_strict_runtime_config(db_config, input_xlsx: str) -> None:
+    if input_xlsx:
+        return
+    if not db_config.exists or not db_config.database_url:
+        raise ValueError("strict-config 模式要求配置 DATABASE_URL，且不能回退旧 db.py 流程")
+    validate_db_config_ready(db_config)
+
+
+def save_intermediate_result(logs_dir: Path, record_index: int, source_id: str, info_id: str, payload: Dict[str, Any]) -> Path:
+    intermediate_dir = ensure_dir(logs_dir / "intermediate")
+    safe_id = "".join(ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in (info_id or source_id or str(record_index)))[:60]
+    path = intermediate_dir / f"{record_index:04d}_{safe_id or 'record'}.json"
+    path.write_text(json.dumps(payload, ensure_ascii=False, default=str, indent=2), encoding="utf-8")
+    return path
 
 
 def log_rule_result(result, logs_dir: Path, record_index: int, rule_phase: str, logger: logging.Logger) -> None:
@@ -61,6 +94,19 @@ def _empty_metadata() -> Dict[str, List[Dict[str, Any]]]:
         "extract_evaluations": [],
         "failed_records": [],
     }
+
+
+def _score_from_evals(evaluations: List[Dict[str, Any]]) -> int:
+    scores = [int(item.get("confidence_score", 0)) for item in evaluations]
+    return min(scores) if scores else 0
+
+
+def choose_final_attempt(initial_score: int, retry_score: int, retry_parse_error: str, retry_rows: List[Dict[str, Any]]) -> str:
+    if retry_parse_error or not retry_rows:
+        return "initial"
+    if retry_score < initial_score - 5:
+        return "initial"
+    return "ocr_retry"
 
 
 def resolve_input_path(value: str) -> Path:
@@ -108,6 +154,8 @@ def extract_record_rows(
     llm_format: str = "v2",
     table_mapping=None,
     no_llm: bool = False,
+    input_mode: str = "",
+    save_intermediate: bool = False,
     metadata: Dict[str, List[Dict[str, Any]]] | None = None,
     ocr_func=process_image_ocr,
 ) -> List[Dict[str, Any]]:
@@ -173,6 +221,7 @@ def extract_record_rows(
                 "source_url": record.get("SourceURL"),
                 "status": "success",
                 "attempt": "initial",
+                "input_mode": input_mode,
                 "ocr_triggered": False,
                 "ocr_trigger_reason": retry_eval.get("ocr_trigger_reason") if retry_eval else "",
                 "image_count": len(parsed.image_urls),
@@ -181,11 +230,31 @@ def extract_record_rows(
                 "llm_format": "none" if no_llm else llm_format,
                 "llm_parse_success": not bool(initial_llm_result.parse_error),
                 "need_manual_review": initial_fusion.need_manual_review,
-                "review_reason": initial_fusion.review_reason,
+                "review_reason": ("no_llm 模式下跳过 LLM/OCR；" if no_llm else "") + initial_fusion.review_reason,
                 "output_rows": len(initial_rows),
                 "error": "",
+                "initial_confidence_score": _score_from_evals(initial_evals),
+                "ocr_retry_confidence_score": "",
+                "ocr_improved": False,
+                "final_attempt": "initial",
             }
         )
+        if save_intermediate:
+            save_intermediate_result(
+                logs_dir,
+                record_index,
+                source_id,
+                info_id,
+                {
+                    "parsed_text": parsed.clean_text,
+                    "tables_text": parsed.tables_text,
+                    "table_rule_records": table_result.records,
+                    "text_rule_records": text_rule_result.records,
+                    "llm_raw_output": initial_llm_result.raw_output,
+                    "fused_records": initial_rows,
+                    "evaluations": initial_evals,
+                },
+            )
         return initial_rows
 
     logger.info("低置信度触发OCR重跑: %s", retry_eval["ocr_trigger_reason"])
@@ -213,6 +282,7 @@ def extract_record_rows(
                 "source_url": record.get("SourceURL"),
                 "status": "success",
                 "attempt": "initial",
+                "input_mode": input_mode,
                 "ocr_triggered": True,
                 "ocr_trigger_reason": retry_eval["ocr_trigger_reason"] if retry_eval else "",
                 "image_count": len(parsed.image_urls),
@@ -224,8 +294,29 @@ def extract_record_rows(
                 "review_reason": "OCR 全部失败，保留首轮融合结果",
                 "output_rows": len(initial_rows),
                 "error": "",
+                "initial_confidence_score": _score_from_evals(initial_evals),
+                "ocr_retry_confidence_score": "",
+                "ocr_improved": False,
+                "final_attempt": "initial",
             }
         )
+        if save_intermediate:
+            save_intermediate_result(
+                logs_dir,
+                record_index,
+                source_id,
+                info_id,
+                {
+                    "parsed_text": parsed.clean_text,
+                    "tables_text": parsed.tables_text,
+                    "table_rule_records": table_result.records,
+                    "text_rule_records": text_rule_result.records,
+                    "llm_raw_output": initial_llm_result.raw_output,
+                    "fused_records": initial_rows,
+                    "evaluations": initial_evals,
+                    "ocr_failure_count": ocr_summary.failure_count,
+                },
+            )
         return initial_rows
 
     retry_llm_result = extract_once_detail(
@@ -254,8 +345,11 @@ def extract_record_rows(
         ocr_attempted=True,
     )
     retry_eval_payloads = log_eval_entries(retry_evals, logs_dir, record_index, record, "ocr_retry", debug, logger)
-    retry_score = min([item["confidence_score"] for item in retry_evals], default=0)
-    initial_score = min([item["confidence_score"] for item in initial_evals], default=0)
+    retry_score = _score_from_evals(retry_evals)
+    initial_score = _score_from_evals(initial_evals)
+    final_attempt = choose_final_attempt(initial_score, retry_score, retry_llm_result.parse_error, retry_rows)
+    final_rows = retry_rows if final_attempt == "ocr_retry" else initial_rows
+    final_fusion = retry_fusion if final_attempt == "ocr_retry" else initial_fusion
     retry_field_evidence = _with_context(retry_fusion.field_evidence, record_index, "ocr_retry")
     retry_conflicts = _with_context(retry_fusion.conflict_evidence, record_index, "ocr_retry")
     _append_jsonl_many(logs_dir / "field_evidence.jsonl", retry_field_evidence)
@@ -270,7 +364,8 @@ def extract_record_rows(
             "title": record.get("Title"),
             "source_url": record.get("SourceURL"),
             "status": "success",
-            "attempt": "ocr_retry",
+            "attempt": final_attempt,
+            "input_mode": input_mode,
             "ocr_triggered": True,
             "ocr_trigger_reason": retry_eval["ocr_trigger_reason"] if retry_eval else "",
             "image_count": len(parsed.image_urls),
@@ -278,14 +373,34 @@ def extract_record_rows(
             "ocr_failure_count": ocr_summary.failure_count,
             "llm_format": llm_format,
             "llm_parse_success": not bool(retry_llm_result.parse_error),
-            "need_manual_review": retry_fusion.need_manual_review,
-            "review_reason": retry_fusion.review_reason,
-            "output_rows": len(retry_rows),
+            "need_manual_review": final_fusion.need_manual_review,
+            "review_reason": final_fusion.review_reason,
+            "output_rows": len(final_rows),
             "error": "",
+            "initial_confidence_score": initial_score,
+            "ocr_retry_confidence_score": retry_score,
+            "ocr_improved": retry_score > initial_score,
+            "final_attempt": final_attempt,
         }
     )
-    logger.info("OCR 前 confidence_score=%s, OCR 后 confidence_score=%s, improved=%s, final_attempt=ocr_retry", initial_score, retry_score, retry_score > initial_score)
-    return retry_rows
+    logger.info("OCR 前 confidence_score=%s, OCR 后 confidence_score=%s, improved=%s, final_attempt=%s", initial_score, retry_score, retry_score > initial_score, final_attempt)
+    if save_intermediate:
+        save_intermediate_result(
+            logs_dir,
+            record_index,
+            source_id,
+            info_id,
+            {
+                "parsed_text": parsed.clean_text,
+                "tables_text": parsed.tables_text,
+                "table_rule_records": table_result.records,
+                "text_rule_records": text_rule_result.records,
+                "llm_raw_output": retry_llm_result.raw_output,
+                "fused_records": final_rows,
+                "evaluations": [*initial_evals, *retry_evals],
+            },
+        )
+    return final_rows
 
 
 def extract_once(
@@ -384,7 +499,8 @@ def extract_once_detail(
         logger.info("大模型调用是否成功: true, attempt=%s", attempt)
     except Exception as llm_exc:
         raw_output = "[]"
-        logger.exception("大模型调用是否成功: false, attempt=%s, error=%s", attempt, llm_exc)
+        masked_error = mask_sensitive_text(str(llm_exc))
+        logger.error("大模型调用是否成功: false, attempt=%s, error=%s", attempt, masked_error)
         append_jsonl(
             logs_dir / "failed_records.jsonl",
             {
@@ -393,13 +509,13 @@ def extract_once_detail(
                 "record_index": record_index,
                 "Title": record.get("Title"),
                 "SourceURL": record.get("SourceURL"),
-                "error": str(llm_exc),
+                "error": masked_error,
             },
         )
 
         rows = normalize_llm_rows(raw_output, record, today, logs_dir, field_mapping=field_mapping)
-        result = LlmExtractionResult(records=rows, raw_output=raw_output, parse_error=str(llm_exc), need_manual_review=True, review_reason=str(llm_exc))
-        logger.info("llm_format=%s parse_success=false need_manual_review=true review_reason=%s", llm_format, llm_exc)
+        result = LlmExtractionResult(records=rows, raw_output=raw_output, parse_error=masked_error, need_manual_review=True, review_reason=masked_error)
+        logger.info("llm_format=%s parse_success=false need_manual_review=true review_reason=%s", llm_format, masked_error)
     logger.info("模型返回行数: %s, attempt=%s", len(rows), attempt)
     if debug:
         logger.debug("抽取上下文: attempt=%s image_count=%s ocr_text_length=%s", attempt, image_count, len(image_ocr_text or ""))
@@ -445,7 +561,9 @@ def main() -> int:
     parser = build_arg_parser(settings)
     args = parser.parse_args()
 
-    logs_dir = PROJECT_ROOT / "logs"
+    logs_dir = Path(args.log_dir)
+    if not logs_dir.is_absolute():
+        logs_dir = PROJECT_ROOT / logs_dir
     temp_images_dir = PROJECT_ROOT / "temp_images"
     output_dir = Path(args.output_dir)
     if not output_dir.is_absolute():
@@ -455,6 +573,7 @@ def main() -> int:
 
     logger = setup_logging(logs_dir, args.debug)
     logger.info("程序启动参数: %s", vars(args))
+    runtime_flags = resolve_runtime_flags(args.dry_run, args.no_llm, args.no_ocr, args.no_excel)
 
     try:
         field_mapping = load_field_mapping(args.field_config)
@@ -467,6 +586,7 @@ def main() -> int:
 
     try:
         if args.input_xlsx:
+            input_mode = "input-xlsx"
             input_path = resolve_input_path(args.input_xlsx)
             logger.info("当前输入模式: input-xlsx, path=%s", input_path)
             if args.keyword:
@@ -476,6 +596,8 @@ def main() -> int:
         else:
             selected_ids = parse_selected_ids(args.selected_ids)
             db_config = load_db_config(args.config)
+            if args.strict_config:
+                validate_strict_runtime_config(db_config, args.input_xlsx)
             explicit_config = "--config" in sys.argv
             keyword_groups = expand_keyword_groups(args.keyword)
             keyword_mode = args.keyword_mode or db_config.query.keyword_mode
@@ -486,6 +608,7 @@ def main() -> int:
                 logger.info("--selected-ids 优先于 --keyword，已忽略关键词检索")
 
             if db_config.use_configured_reader:
+                input_mode = "configured-db"
                 validate_db_config_ready(db_config)
                 effective_limit = resolve_effective_limit(args.limit, settings, db_config, configured_db_enabled=True)
                 logger.info("当前输入模式: configured-db, table=%s", db_config.source.table)
@@ -510,21 +633,25 @@ def main() -> int:
                 validate_db_config_ready(db_config)
                 records = []
             else:
+                input_mode = "legacy-db"
                 validate_keyword_supported(args.keyword, configured_db_enabled=False)
                 effective_limit = resolve_effective_limit(args.limit, settings, configured_db_enabled=False)
                 logger.info("当前输入模式: MySQL, table=%s", settings.db_table)
                 records = fetch_records(settings, limit=effective_limit, offset=args.offset, where=args.where)
         logger.info("读取到记录数: %s", len(records))
     except (ConfigError, DbReaderError, Exception) as exc:
-        logger.exception("读取输入失败: %s", exc)
-        append_jsonl(logs_dir / "failed_records.jsonl", {"phase": "read_input", "error": str(exc)})
+        masked_error = mask_sensitive_text(str(exc))
+        logger.error("读取输入失败: %s", masked_error)
+        append_jsonl(logs_dir / "failed_records.jsonl", {"phase": "read_input", "error": masked_error})
         return 1
 
-    llm_client = None if args.no_llm else LLMClient(settings)
-    ocr_enabled = settings.ocr_enabled and not args.no_ocr
+    llm_client = None if runtime_flags["no_llm"] else LLMClient(settings)
+    ocr_enabled = settings.ocr_enabled and not runtime_flags["no_ocr"]
     all_rows: List[Dict[str, Any]] = []
     all_metadata = _empty_metadata()
     output_paths: List[Path] = []
+    record_error_count = 0
+    started_at = time.time()
 
     for index, record in enumerate(records, start=1):
         try:
@@ -547,23 +674,42 @@ def main() -> int:
                 field_mapping=field_mapping,
                 llm_format=args.llm_format,
                 table_mapping=table_mapping,
-                no_llm=args.no_llm,
+                no_llm=runtime_flags["no_llm"],
+                input_mode=input_mode,
+                save_intermediate=args.save_intermediate,
                 metadata=record_metadata,
             )
 
-            if args.mode == "single":
+            if args.mode == "single" and not runtime_flags["no_excel"]:
                 output_path = build_single_output_path(record, output_dir, args.offset + index)
-                write_extraction_workbook(
-                    rows,
-                    output_path,
-                    template_path,
-                    field_mapping,
-                    collection_logs=record_metadata["collection_logs"],
-                    field_evidence=record_metadata["field_evidence"],
-                    conflict_evidence=record_metadata["conflict_evidence"],
-                    extract_evaluations=record_metadata["extract_evaluations"],
-                    failed_records=record_metadata["failed_records"],
-                )
+                try:
+                    write_extraction_workbook(
+                        rows,
+                        output_path,
+                        template_path,
+                        field_mapping,
+                        collection_logs=record_metadata["collection_logs"],
+                        field_evidence=record_metadata["field_evidence"],
+                        conflict_evidence=record_metadata["conflict_evidence"],
+                        extract_evaluations=record_metadata["extract_evaluations"],
+                        failed_records=record_metadata["failed_records"],
+                    )
+                except Exception as exc:
+                    masked_error = mask_sensitive_text(str(exc))
+                    logger.error("Excel 写入失败: %s", masked_error)
+                    append_jsonl(
+                        logs_dir / "failed_records.jsonl",
+                        {
+                            "phase": "excel_write",
+                            "record_index": index,
+                            "source_id": record.get("_source_id"),
+                            "info_id": record.get("info_id"),
+                            "Title": record.get("Title"),
+                            "SourceURL": record.get("SourceURL"),
+                            "error": masked_error,
+                        },
+                    )
+                    return 1
                 logger.info("Excel 输出路径: %s", output_path)
                 output_paths.append(output_path)
             else:
@@ -571,7 +717,9 @@ def main() -> int:
                 for key in all_metadata:
                     all_metadata[key].extend(record_metadata[key])
         except Exception as exc:
-            logger.exception("单条记录处理失败: %s", exc)
+            record_error_count += 1
+            masked_error = mask_sensitive_text(str(exc))
+            logger.error("单条记录处理失败: %s", masked_error)
             failed_payload = {
                     "phase": "process_record",
                     "record_index": index,
@@ -579,7 +727,7 @@ def main() -> int:
                     "info_id": record.get("info_id"),
                     "Title": record.get("Title"),
                     "SourceURL": record.get("SourceURL"),
-                    "error": str(exc),
+                    "error": masked_error,
                 }
             append_jsonl(logs_dir / "failed_records.jsonl", failed_payload)
             all_metadata["failed_records"].append(failed_payload)
@@ -591,29 +739,40 @@ def main() -> int:
                     "source_url": record.get("SourceURL"),
                     "status": "failed",
                     "attempt": "",
-                    "llm_format": "none" if args.no_llm else args.llm_format,
-                    "error": str(exc),
+                    "input_mode": input_mode,
+                    "llm_format": "none" if runtime_flags["no_llm"] else args.llm_format,
+                    "error": masked_error,
                 }
             )
+            if should_stop_processing(record_error_count, args.max_record_errors, args.fail_fast):
+                logger.error("单条记录失败数达到阈值，停止后续处理: errors=%s max=%s fail_fast=%s", record_error_count, args.max_record_errors, args.fail_fast)
+                break
             continue
 
-    if args.mode == "merge":
+    if args.mode == "merge" and not runtime_flags["no_excel"]:
         output_path = build_merge_output_path(output_dir)
-        write_extraction_workbook(
-            all_rows,
-            output_path,
-            template_path,
-            field_mapping,
-            collection_logs=all_metadata["collection_logs"],
-            field_evidence=all_metadata["field_evidence"],
-            conflict_evidence=all_metadata["conflict_evidence"],
-            extract_evaluations=all_metadata["extract_evaluations"],
-            failed_records=all_metadata["failed_records"],
-        )
+        try:
+            write_extraction_workbook(
+                all_rows,
+                output_path,
+                template_path,
+                field_mapping,
+                collection_logs=all_metadata["collection_logs"],
+                field_evidence=all_metadata["field_evidence"],
+                conflict_evidence=all_metadata["conflict_evidence"],
+                extract_evaluations=all_metadata["extract_evaluations"],
+                failed_records=all_metadata["failed_records"],
+            )
+        except Exception as exc:
+            masked_error = mask_sensitive_text(str(exc))
+            logger.error("Excel 写入失败: %s", masked_error)
+            append_jsonl(logs_dir / "failed_records.jsonl", {"phase": "excel_write", "error": masked_error})
+            return 1
         logger.info("Excel 输出路径: %s", output_path)
         output_paths.append(output_path)
 
-    logger.info("任务结束，输出文件数: %s", len(output_paths))
+    elapsed = time.time() - started_at
+    logger.info("任务结束，输出文件数: %s, 耗时秒: %.2f, 平均每条秒: %.2f, 单条失败数: %s", len(output_paths), elapsed, elapsed / max(len(records), 1), record_error_count)
     for path in output_paths:
         print(path)
     return 0

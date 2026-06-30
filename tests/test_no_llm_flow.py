@@ -37,6 +37,7 @@ class NoLlmFlowTests(unittest.TestCase):
                 logger=None,
                 field_mapping=load_field_mapping(None),
                 no_llm=True,
+                input_mode="input-xlsx",
                 metadata=metadata,
             )
 
@@ -44,7 +45,9 @@ class NoLlmFlowTests(unittest.TestCase):
         self.assertEqual(rows[0]["info_id"], "A-001")
         self.assertEqual(rows[0]["地区名称"], "山东省")
         self.assertEqual(metadata["collection_logs"][0]["llm_format"], "none")
+        self.assertEqual(metadata["collection_logs"][0]["input_mode"], "input-xlsx")
         self.assertFalse(metadata["collection_logs"][0]["ocr_triggered"])
+        self.assertIn("跳过 LLM/OCR", metadata["collection_logs"][0]["review_reason"])
         self.assertTrue(metadata["field_evidence"])
 
 

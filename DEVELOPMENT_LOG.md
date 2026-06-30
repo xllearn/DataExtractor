@@ -98,3 +98,40 @@
 ### 已验证
 
 - `py -m unittest discover -s tests -v`
+
+## 2026-06-30 续 3
+
+### 本轮目标
+
+继续修补阶段 1-9 的遗留问题，并完成阶段 10-12：
+
+- 补齐采集日志、OCR retry 选择、冲突证据兼容字段和模板 sheet 保留。
+- 增加 CLI 运行控制参数。
+- 增强稳定性、安全脱敏和 Excel 写入防护。
+- 补充 README 与验收清单。
+
+### 已完成
+
+- `config.py` 新增 `--log-dir`、`--dry-run`、`--max-record-errors`、`--fail-fast`、`--strict-config`、`--no-excel`、`--save-intermediate`。
+- `main.py` 新增运行时 flag 归一化：`--dry-run` 会跳过 LLM、OCR retry 和 Excel；`--no-llm` 会同步跳过 OCR retry。
+- `main.py` 增加 `input_mode` 采集日志字段，覆盖 `input-xlsx`、`configured-db`、`legacy-db`，失败记录也会保留该字段。
+- OCR retry 改为比较首轮与重试置信度，记录 `initial_confidence_score`、`ocr_retry_confidence_score`、`ocr_improved`、`final_attempt`，重试明显变差时保留首轮结果。
+- `--no-llm` 下不初始化 LLM，不触发 OCR retry，采集日志记录 `llm_format=none`、`ocr_triggered=false`，人工复核原因标注跳过 LLM/OCR。
+- `record_fusion.py` 的冲突证据保留旧字段，并新增 `source_a`、`value_a`、`source_b`、`value_b`、`chosen_source`、`chosen_value`、`reason`。
+- `excel_writer.py` 只替换目标 sheet，保留模板中的其他 sheet；写入前会清理控制字符、限制长度并转义公式型文本。
+- 新增 `security_utils.py`，提供数据库 URL、敏感文本和 Excel 单元格安全清洗工具。
+- `table_extractor.py` 对 YAML 解析错误给出清晰 `TableMappingError`，并将置信度裁剪到 `0..1`。
+- `main.py` 对输入读取、单条处理和 Excel 写入错误做敏感信息脱敏；single 与 merge Excel 写入失败都会返回非 0。
+- 新增 `ACCEPTANCE_CHECKLIST.md`，记录阶段 10-12 的验收点。
+- README 补充运行控制参数、日志目录、模板保留、Excel 安全清洗、OCR retry 选择和冲突证据通用字段说明。
+- 新增/扩展测试：`tests/test_cli_runtime_modes.py`、`tests/test_stability_and_security.py`、`tests/test_confidence_retry.py`、`tests/test_no_llm_flow.py`、`tests/test_record_fusion.py`、`tests/test_excel_multisheet.py`。
+
+### 已验证
+
+- `py -m unittest discover -s tests -v`
+- `py -m unittest -v tests.test_cli_runtime_modes tests.test_confidence_retry`
+
+### 注意事项
+
+- 本机继续使用 `py` 运行测试和脚本。
+- 推送仍需用 Python `dulwich`，避免 Git for Windows HTTPS helper 问题。

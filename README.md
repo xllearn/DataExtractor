@@ -94,6 +94,10 @@ templates/template.xlsx
 
 如果模板不存在，程序会自动创建包含固定 26 列表头的新 xlsx。
 
+如果模板存在，程序只会替换/重建目标 sheet：`结果数据`、`采集日志`、`字段证据`、`冲突证据`、`抽取评估`、`失败记录`。模板中的其他 sheet 会被保留，方便继续使用说明页、字典页或人工校验页。
+
+写入 Excel 前会做基础安全清洗：去除控制字符，限制单元格最大长度，并对以 `=`、`+`、`-`、`@` 开头的文本加前缀，避免被 Excel 当作公式执行。默认占位值 `--` 会保持原样。
+
 调试 Excel 可以放到：
 
 ```text
@@ -177,6 +181,23 @@ python main.py --no-llm --input-xlsx "samples/db/新建 XLSX 工作表.xlsx" --l
 
 `--no-llm` 下不会触发 OCR retry，因为 OCR retry 主要服务于带 OCR 上下文的 LLM 二次抽取。
 
+运行控制参数：
+
+```bash
+python main.py --dry-run --input-xlsx "samples/db/新建 XLSX 工作表.xlsx" --limit 5
+python main.py --no-excel --save-intermediate --log-dir logs/debug_run --limit 5
+python main.py --fail-fast --max-record-errors 1 --limit 20 --mode merge
+python main.py --strict-config --config config/db_config.yml --limit 20
+```
+
+- `--log-dir`：指定运行日志、失败记录、证据日志和中间结果保存目录，默认 `logs/`。
+- `--dry-run`：不初始化 LLM，不执行 OCR retry，不写 Excel；适合验证读取、规则抽取、日志和错误处理路径。
+- `--no-excel`：执行抽取和日志记录，但不生成 Excel。
+- `--save-intermediate`：为每条记录保存解析文本、规则结果、LLM 原始输出、融合结果和评估 payload 到 `log-dir/intermediate/`。
+- `--fail-fast`：第一条记录处理失败后立即停止。
+- `--max-record-errors`：允许的单条记录失败数，默认 20；达到阈值后停止后续记录。
+- `--strict-config`：非 `--input-xlsx` 模式下强制使用配置化数据库读取，缺少 `DATABASE_URL` 或表配置时直接报错。
+
 ## 输出模式
 
 `single` 是默认模式。每条输入记录生成一个独立 xlsx，文件名类似：
@@ -250,7 +271,7 @@ config/table_mapping.yml
 
 LLM 主要用于补充规则没有抽到的字段。规则和 LLM 对同一字段给出不同值时，程序保留高优先级值，生成冲突证据，并标记 `need_manual_review=true`。如果规则记录数和 LLM 记录数不一致，程序会尽量按顺序对齐或追加 LLM 记录，同时标记人工复核。
 
-OCR retry 现在基于融合后的结果做置信度评估。首轮融合结果低置信度且存在图片风险时才 OCR；OCR 成功后会用 OCR 文本重新调用 LLM v2、重新融合、重新评估。OCR 全部失败时保留首轮融合结果。日志会记录 OCR 触发原因、成功/失败图片数、OCR 前后置信度和最终采用 attempt。
+OCR retry 现在基于融合后的结果做置信度评估。首轮融合结果低置信度且存在图片风险时才 OCR；OCR 成功后会用 OCR 文本重新调用 LLM v2、重新融合、重新评估。程序会比较首轮和 OCR retry 的置信度：retry 解析失败、没有结果或置信度明显下降时保留首轮，否则采用 OCR retry。日志会记录 OCR 触发原因、成功/失败图片数、OCR 前后置信度、是否改善和最终采用 attempt。
 
 ## LLM v2 输出格式
 
@@ -283,7 +304,7 @@ OCR retry 现在基于融合后的结果做置信度评估。首轮融合结果�
 - `结果数据`：固定 26 列，严格按 `field_mapping.headers` 输出
 - `采集日志`：每篇文章的输入、OCR、LLM、人工复核和输出状态
 - `字段证据`：数据库直接字段、表格规则、正文规则、LLM 证据，含 `chosen` 标记
-- `冲突证据`：规则与 LLM 冲突时的保留值、冲突值和原因
+- `冲突证据`：规则与 LLM 冲突时的保留值、冲突值和原因，同时保留通用字段 `source_a`、`value_a`、`source_b`、`value_b`、`chosen_source`、`chosen_value`、`reason`
 - `抽取评估`：复用置信度评估 payload
 - `失败记录`：单条记录失败信息
 
@@ -296,6 +317,8 @@ OCR retry 现在基于融合后的结果做置信度评估。首轮融合结果�
 ```text
 logs/run.log
 ```
+
+可通过 `--log-dir` 改到其他目录。程序写入日志前会对常见敏感文本做脱敏，包括数据库 URL 密码、API Key、password、token 和 secret。
 
 失败记录：
 

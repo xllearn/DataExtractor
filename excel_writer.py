@@ -8,10 +8,12 @@ from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
 from field_mapping import FieldMapping, load_field_mapping, normalize_record_fields
+from security_utils import sanitize_excel_value
 from utils import EXCEL_HEADERS, build_single_filename, ensure_dir
 
 
 LONG_TEXT_HEADERS = {"个人账户计入办法", "个人账户使用范围", "备注", "相关资讯"}
+TARGET_SHEETS = {"结果数据", "采集日志", "字段证据", "冲突证据", "抽取评估", "失败记录"}
 
 
 def _new_or_template_workbook(template_path: Path) -> Workbook:
@@ -20,7 +22,8 @@ def _new_or_template_workbook(template_path: Path) -> Workbook:
     else:
         workbook = Workbook()
     for worksheet in list(workbook.worksheets):
-        workbook.remove(worksheet)
+        if worksheet.title in TARGET_SHEETS or (len(workbook.worksheets) == 1 and worksheet.title == "Sheet"):
+            workbook.remove(worksheet)
     return workbook
 
 
@@ -87,7 +90,7 @@ def append_rows(worksheet, rows: Iterable[Dict[str, object]], field_mapping: Fie
     field_mapping = field_mapping or load_field_mapping(None)
     for row in rows:
         normalized = normalize_record_fields(row, field_mapping)
-        worksheet.append([normalized.get(header, "") for header in field_mapping.headers])
+        worksheet.append([sanitize_excel_value(normalized.get(header, "")) for header in field_mapping.headers])
 
 
 def format_worksheet(worksheet, field_mapping: FieldMapping | None = None) -> None:
@@ -127,9 +130,31 @@ COLLECTION_LOG_HEADERS = [
     "review_reason",
     "output_rows",
     "error",
+    "initial_confidence_score",
+    "ocr_retry_confidence_score",
+    "ocr_improved",
+    "final_attempt",
 ]
 FIELD_EVIDENCE_HEADERS = ["source_id", "info_id", "record_index", "row_index", "field", "value", "evidence", "confidence", "source", "rule_name", "attempt", "chosen"]
-CONFLICT_EVIDENCE_HEADERS = ["source_id", "info_id", "record_index", "row_index", "field", "rule_value", "llm_value", "chosen_value", "reason", "rule_source", "llm_source", "attempt"]
+CONFLICT_EVIDENCE_HEADERS = [
+    "source_id",
+    "info_id",
+    "record_index",
+    "row_index",
+    "field",
+    "rule_value",
+    "llm_value",
+    "chosen_value",
+    "reason",
+    "rule_source",
+    "llm_source",
+    "source_a",
+    "value_a",
+    "source_b",
+    "value_b",
+    "chosen_source",
+    "attempt",
+]
 EXTRACT_EVAL_HEADERS = [
     "record_index",
     "row_index",
@@ -156,7 +181,7 @@ def write_dict_sheet(workbook, title: str, rows: List[Dict[str, Any]], headers: 
         cell.font = Font(bold=True)
         cell.fill = PatternFill("solid", fgColor="D9EAF7")
     for row in rows:
-        worksheet.append([row.get(header, "") for header in headers])
+        worksheet.append([sanitize_excel_value(row.get(header, "")) for header in headers])
     worksheet.freeze_panes = "A2"
     worksheet.auto_filter.ref = f"A1:{get_column_letter(len(headers))}{worksheet.max_row}"
     for column_index, header in enumerate(headers, start=1):
