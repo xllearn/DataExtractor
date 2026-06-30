@@ -45,6 +45,33 @@ class TableExtractorTests(unittest.TestCase):
         self.assertEqual(result.records[0]["类型"], "门诊统筹")
         self.assertEqual(result.records[0]["报销比例"], "70%")
 
+    def test_table_extractor_uses_passed_field_mapping_aliases(self):
+        from field_mapping import FieldMapping
+        from table_extractor import extract_tables_from_text
+        from utils import EXCEL_HEADERS
+
+        mapping = FieldMapping(headers=list(EXCEL_HEADERS), aliases={"报销比例": ["给付比例"]})
+        text = """
+| 给付比例 |
+| --- |
+| 66% |
+"""
+
+        result = extract_tables_from_text(text, field_mapping=mapping)
+
+        self.assertEqual(result.records[0]["报销比例"], "66%")
+
+    def test_extract_table_records_deduplicates_html_and_markdown_sources(self):
+        from table_extractor import extract_table_records
+
+        html = "<table><tr><th>支付比例</th></tr><tr><td>80%</td></tr></table>"
+        markdown = "| 支付比例 |\n| --- |\n| 80% |"
+
+        result = extract_table_records(html, markdown)
+
+        self.assertEqual(len(result.records), 1)
+        self.assertEqual(result.records[0]["报销比例"], "80%")
+
 
 class TextRuleExtractorTests(unittest.TestCase):
     def test_extracts_common_key_value_patterns(self):
@@ -68,6 +95,17 @@ class TextRuleExtractorTests(unittest.TestCase):
 
         self.assertEqual(result.records[0]["保险类型"], "居民医保")
         self.assertEqual(result.records[0]["报销比例"], "60%")
+
+    def test_text_rule_extractor_uses_passed_field_mapping_aliases(self):
+        from field_mapping import FieldMapping
+        from rule_extractor import extract_key_value_records
+        from utils import EXCEL_HEADERS
+
+        mapping = FieldMapping(headers=list(EXCEL_HEADERS), aliases={"报销比例": ["给付比例"]})
+
+        result = extract_key_value_records("给付比例为66%", field_mapping=mapping)
+
+        self.assertEqual(result.records[0]["报销比例"], "66%")
 
     def test_rule_extraction_failure_is_captured(self):
         from rule_extractor import extract_key_value_records

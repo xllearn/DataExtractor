@@ -2,7 +2,7 @@ import re
 from typing import Any, Dict, List, Tuple
 
 from extraction_types import RuleExtractionResult
-from field_mapping import load_field_mapping, normalize_record_fields
+from field_mapping import FieldMapping, load_field_mapping, normalize_record_fields
 
 
 FIELD_ALIASES: Dict[str, List[str]] = {
@@ -27,9 +27,19 @@ def _evidence(source_id: str, info_id: str, field: str, value: str, evidence: st
     }
 
 
-def _find_field_values(text: str) -> List[Tuple[str, str, str]]:
+def _field_aliases(field_mapping: FieldMapping) -> Dict[str, List[str]]:
+    aliases = {field: list(values) for field, values in FIELD_ALIASES.items()}
+    for field, values in field_mapping.aliases.items():
+        aliases.setdefault(field, [])
+        for value in values:
+            if value not in aliases[field]:
+                aliases[field].append(value)
+    return aliases
+
+
+def _find_field_values(text: str, field_mapping: FieldMapping) -> List[Tuple[str, str, str]]:
     hits: List[Tuple[str, str, str]] = []
-    for field, aliases in FIELD_ALIASES.items():
+    for field, aliases in _field_aliases(field_mapping).items():
         for alias in aliases:
             pattern = re.compile(rf"({re.escape(alias)}\s*(?:[:：为是]|不超过|不高于)?\s*{VALUE_PATTERN})")
             for match in pattern.finditer(text):
@@ -66,12 +76,18 @@ def _find_context_hints(text: str) -> List[Tuple[str, str, str, str, float]]:
     return hints
 
 
-def extract_key_value_records(text: str, source_id: str = "", info_id: str = "") -> RuleExtractionResult:
+def extract_key_value_records(
+    text: str,
+    source_id: str = "",
+    info_id: str = "",
+    field_mapping: FieldMapping | None = None,
+) -> RuleExtractionResult:
     result = RuleExtractionResult()
     try:
+        field_mapping = field_mapping or load_field_mapping(None)
         source_text = str(text or "")
         record: Dict[str, Any] = {}
-        for field, value, evidence_text in _find_field_values(source_text):
+        for field, value, evidence_text in _find_field_values(source_text, field_mapping):
             if field not in record:
                 record[field] = value
                 result.field_evidence.append(_evidence(source_id, info_id, field, value, evidence_text, 0.8, "kv_pattern"))
@@ -87,7 +103,7 @@ def extract_key_value_records(text: str, source_id: str = "", info_id: str = "")
                 result.field_evidence.append(_evidence(source_id, info_id, field, value, evidence_text, confidence, rule_name))
 
         if record:
-            result.records.append(normalize_record_fields(record, load_field_mapping(None)))
+            result.records.append(normalize_record_fields(record, field_mapping))
         return result
     except Exception as exc:
         result.errors.append({"source": "text_rule", "rule_name": "kv_pattern", "error": str(exc)})

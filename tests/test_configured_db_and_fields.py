@@ -257,6 +257,9 @@ class IntegrationSurfaceTests(unittest.TestCase):
                 "1,2",
                 "--llm-format",
                 "legacy",
+                "--table-config",
+                "config/table_mapping.yml",
+                "--no-llm",
             ]
         )
 
@@ -266,6 +269,8 @@ class IntegrationSurfaceTests(unittest.TestCase):
         self.assertEqual(args.keyword_mode, "and")
         self.assertEqual(args.selected_ids, "1,2")
         self.assertEqual(args.llm_format, "legacy")
+        self.assertEqual(args.table_config, "config/table_mapping.yml")
+        self.assertTrue(args.no_llm)
 
     def test_json_normalization_uses_field_mapping_aliases(self):
         from json_utils import normalize_llm_rows

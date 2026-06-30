@@ -68,3 +68,33 @@
 - `py -m unittest discover -s tests -v`
 - `py -m compileall main.py config.py config_loader.py db.py db_reader.py keyword_utils.py field_mapping.py json_utils.py excel_writer.py prompts.py prompts_v2.py llm_extractor.py table_extractor.py rule_extractor.py extraction_types.py input_xlsx.py utils.py tests`
 - `py main.py --help`
+
+## 2026-06-30 续 2
+
+### 本轮目标
+
+修补阶段 4-6 遗留问题，并完成阶段 7-9：
+
+- 规则结果与 LLM 结果融合。
+- OCR retry 接入融合结果评估和二次融合。
+- Excel 输出增强为多 sheet 可追溯 workbook。
+
+### 已完成
+
+- `table_extractor.py` 和 `rule_extractor.py` 支持传入当前 `FieldMapping`，不再忽略 `--field-config`。
+- 表格抽取增加按主要字段组合去重，避免 HTML table 与其 Markdown 转写重复生成规则记录。
+- `llm_extractor.py` 新增 `llm_result_to_field_evidence`，把 LLM v2 evidence/confidence 转成统一字段证据。
+- `extraction_types.py` 新增 `FusionResult`。
+- 新增 `record_fusion.py`，实现融合优先级：数据库直接字段 > 表格规则 > 正文规则 > LLM > 默认值。
+- 融合支持多行记录、顺序对齐、LLM 追加行、冲突证据、`need_manual_review` 和 `review_reason`。
+- `main.py` 改为输出融合后的 rows；OCR retry 基于融合结果评估，OCR 后重新调用 LLM、重新融合、重新评估。
+- `main.py` 收集 `collection_logs`、`field_evidence`、`conflict_evidence`、`extract_evaluations`、`failed_records`。
+- `excel_writer.py` 新增 `write_extraction_workbook`，输出 `结果数据`、`采集日志`、`字段证据`、`冲突证据`、`抽取评估`、`失败记录` 多 sheet。
+- 新增 CLI：`--table-config`、`--no-llm`。
+- `--no-llm` 下跳过 LLM 调用和 OCR retry，仅使用直接字段、规则结果和默认值。
+- README 补充融合优先级、冲突证据、OCR 融合、多 sheet 输出、`--table-config` 和 `--no-llm` 示例。
+- 新增 `tests/test_record_fusion.py`、`tests/test_excel_multisheet.py`、`tests/test_no_llm_flow.py`，并扩展规则和 LLM v2 测试。
+
+### 已验证
+
+- `py -m unittest discover -s tests -v`

@@ -10,6 +10,9 @@ from extraction_types import RuleExtractionResult
 from field_mapping import ALIASES, FieldMapping, load_field_mapping, normalize_record_fields
 
 
+DEDUP_FIELDS = ["人员类型", "医院类型", "类型", "起付标准", "补助限额", "报销比例"]
+
+
 @dataclass
 class TableMapping:
     header_aliases: Dict[str, List[str]] = field(default_factory=lambda: {key: list(value) for key, value in ALIASES.items()})
@@ -113,7 +116,7 @@ def _extract_from_rows(
     if len(table_rows) < 2:
         return result
     headers = [_clean_cell(cell) for cell in table_rows[0]]
-    alias_to_header = table_mapping.alias_to_header
+    alias_to_header = {**table_mapping.alias_to_header, **field_mapping.alias_to_header}
 
     for row_number, values in enumerate(table_rows[1:], start=2):
         if not any(values):
@@ -150,9 +153,25 @@ def _extract_from_rows(
 
 def _merge_results(results: Sequence[RuleExtractionResult]) -> RuleExtractionResult:
     merged = RuleExtractionResult()
+    seen_records = set()
+    seen_evidence = set()
     for result in results:
-        merged.records.extend(result.records)
-        merged.field_evidence.extend(result.field_evidence)
+        for record in result.records:
+            key = tuple(str(record.get(field, "")) for field in DEDUP_FIELDS)
+            if key not in seen_records:
+                merged.records.append(record)
+                seen_records.add(key)
+        for evidence in result.field_evidence:
+            key = (
+                evidence.get("source_id", ""),
+                evidence.get("info_id", ""),
+                evidence.get("field", ""),
+                evidence.get("value", ""),
+                evidence.get("evidence", ""),
+            )
+            if key not in seen_evidence:
+                merged.field_evidence.append(evidence)
+                seen_evidence.add(key)
         merged.errors.extend(result.errors)
     return merged
 
@@ -162,9 +181,10 @@ def extract_tables_from_html(
     source_id: str = "",
     info_id: str = "",
     config: TableMapping | None = None,
+    field_mapping: FieldMapping | None = None,
 ) -> RuleExtractionResult:
     table_mapping = config or load_table_mapping(None)
-    field_mapping = load_field_mapping(None)
+    field_mapping = field_mapping or load_field_mapping(None)
     try:
         soup = BeautifulSoup(html or "", "html.parser")
         results = [
@@ -181,9 +201,10 @@ def extract_tables_from_text(
     source_id: str = "",
     info_id: str = "",
     config: TableMapping | None = None,
+    field_mapping: FieldMapping | None = None,
 ) -> RuleExtractionResult:
     table_mapping = config or load_table_mapping(None)
-    field_mapping = load_field_mapping(None)
+    field_mapping = field_mapping or load_field_mapping(None)
     try:
         tables = _rows_from_markdown(text) + _rows_from_delimited_text(text)
         results = [
@@ -201,10 +222,11 @@ def extract_table_records(
     source_id: str = "",
     info_id: str = "",
     config: TableMapping | None = None,
+    field_mapping: FieldMapping | None = None,
 ) -> RuleExtractionResult:
     return _merge_results(
         [
-            extract_tables_from_html(html, source_id=source_id, info_id=info_id, config=config),
-            extract_tables_from_text(text, source_id=source_id, info_id=info_id, config=config),
+            extract_tables_from_html(html, source_id=source_id, info_id=info_id, config=config, field_mapping=field_mapping),
+            extract_tables_from_text(text, source_id=source_id, info_id=info_id, config=config, field_mapping=field_mapping),
         ]
     )

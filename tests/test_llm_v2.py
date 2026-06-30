@@ -85,6 +85,26 @@ class LlmV2ParsingTests(unittest.TestCase):
         self.assertEqual(result.records[0]["报销比例"], "88%")
         self.assertIn("records", result.raw_output)
 
+    def test_llm_result_to_field_evidence_uses_confidence_defaults(self):
+        from llm_extractor import LlmExtractionResult, llm_result_to_field_evidence
+
+        result = LlmExtractionResult(
+            records=[{"报销比例": "80%", "起付标准": "500元"}],
+            evidence={"报销比例": "原文比例"},
+            confidence={"报销比例": 1.5},
+        )
+
+        evidence = llm_result_to_field_evidence(result, source_id="S1", info_id="I1")
+
+        ratio = next(item for item in evidence if item["field"] == "报销比例")
+        deductible = next(item for item in evidence if item["field"] == "起付标准")
+        self.assertEqual(ratio["source"], "llm")
+        self.assertEqual(ratio["rule_name"], "llm_v2")
+        self.assertEqual(ratio["confidence"], 1.0)
+        self.assertEqual(ratio["evidence"], "原文比例")
+        self.assertEqual(deductible["confidence"], 0.6)
+        self.assertEqual(deductible["evidence"], "")
+
 
 if __name__ == "__main__":
     unittest.main()

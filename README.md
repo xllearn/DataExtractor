@@ -156,12 +156,26 @@ python main.py --input-xlsx "samples/db/新建 XLSX 工作表.xlsx" --limit 1 --
 python main.py --field-config config/field_mapping.yml --limit 5 --mode merge
 ```
 
+表格规则配置路径可用 `--table-config` 指定：
+
+```bash
+python main.py --table-config config/table_mapping.yml --limit 5 --mode merge
+```
+
 LLM 输出格式默认使用 v2 JSON object，可用 `--llm-format legacy` 回退旧 JSON 数组 prompt：
 
 ```bash
 python main.py --llm-format v2 --limit 5 --mode merge
 python main.py --llm-format legacy --limit 5 --mode merge
 ```
+
+只使用数据库直接字段、表格规则、正文规则和默认值，不调用 LLM：
+
+```bash
+python main.py --no-llm --input-xlsx "samples/db/新建 XLSX 工作表.xlsx" --limit 5 --mode merge
+```
+
+`--no-llm` 下不会触发 OCR retry，因为 OCR retry 主要服务于带 OCR 上下文的 LLM 二次抽取。
 
 ## 输出模式
 
@@ -204,7 +218,7 @@ python main.py --llm-format legacy --limit 5 --mode merge
 
 ## 规则抽取
 
-程序会在 LLM 前先执行轻量规则抽取，结果暂时只写日志和传给 LLM v2 作为参考，不直接融合覆盖最终输出。
+程序会在 LLM 前先执行轻量规则抽取，规则结果会写入证据日志、传给 LLM v2 作为参考，并进入最终融合流程。
 
 表格规则配置在：
 
@@ -225,6 +239,18 @@ config/table_mapping.yml
 ```
 
 当前支持抽取起付标准、补助限额、报销比例、人员类型、保险类型、医院类型、病种名称、类型和标化类型等字段。规则失败不会中断单条记录处理。
+
+## 规则和 LLM 融合
+
+程序会把数据库直接字段、表格规则、正文规则和 LLM 结果融合为最终输出。融合优先级固定为：
+
+```text
+数据库直接字段 > 表格规则 > 正文规则 > LLM > 默认值
+```
+
+LLM 主要用于补充规则没有抽到的字段。规则和 LLM 对同一字段给出不同值时，程序保留高优先级值，生成冲突证据，并标记 `need_manual_review=true`。如果规则记录数和 LLM 记录数不一致，程序会尽量按顺序对齐或追加 LLM 记录，同时标记人工复核。
+
+OCR retry 现在基于融合后的结果做置信度评估。首轮融合结果低置信度且存在图片风险时才 OCR；OCR 成功后会用 OCR 文本重新调用 LLM v2、重新融合、重新评估。OCR 全部失败时保留首轮融合结果。日志会记录 OCR 触发原因、成功/失败图片数、OCR 前后置信度和最终采用 attempt。
 
 ## LLM v2 输出格式
 
@@ -249,6 +275,19 @@ config/table_mapping.yml
 ```
 
 解析时会强制只保留固定 26 列，补齐缺失字段，删除多余字段，`confidence` 会裁剪到 0-1，`need_manual_review` 会转换为 bool。旧版 JSON array 和单 record object 仍兼容。
+
+## Excel 多 sheet 输出
+
+`single` 和 `merge` 模式现在都会输出可追溯 workbook，包含以下 sheet：
+
+- `结果数据`：固定 26 列，严格按 `field_mapping.headers` 输出
+- `采集日志`：每篇文章的输入、OCR、LLM、人工复核和输出状态
+- `字段证据`：数据库直接字段、表格规则、正文规则、LLM 证据，含 `chosen` 标记
+- `冲突证据`：规则与 LLM 冲突时的保留值、冲突值和原因
+- `抽取评估`：复用置信度评估 payload
+- `失败记录`：单条记录失败信息
+
+旧的 `write_rows_to_workbook` 仍保留兼容，内部会写只有 `结果数据` 的 workbook。
 
 ## 日志
 
@@ -280,6 +319,12 @@ logs/field_evidence.jsonl
 
 ```text
 logs/rule_extract_errors.jsonl
+```
+
+冲突证据：
+
+```text
+logs/conflict_evidence.jsonl
 ```
 
 每条模型输出行都会记录内部评估字段：

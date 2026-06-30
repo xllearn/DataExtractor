@@ -1,7 +1,7 @@
 from datetime import datetime
 from pathlib import Path
 from copy import copy
-from typing import Dict, Iterable, List
+from typing import Any, Dict, Iterable, List
 
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Alignment, Font, PatternFill
@@ -14,26 +14,56 @@ from utils import EXCEL_HEADERS, build_single_filename, ensure_dir
 LONG_TEXT_HEADERS = {"个人账户计入办法", "个人账户使用范围", "备注", "相关资讯"}
 
 
+def _new_or_template_workbook(template_path: Path) -> Workbook:
+    if template_path.exists():
+        workbook = load_workbook(template_path)
+    else:
+        workbook = Workbook()
+    for worksheet in list(workbook.worksheets):
+        workbook.remove(worksheet)
+    return workbook
+
+
 def write_rows_to_workbook(
     rows: Iterable[Dict[str, object]],
     output_path: Path,
     template_path: Path,
     field_mapping: FieldMapping | None = None,
 ) -> Path:
+    return write_extraction_workbook(
+        result_rows=list(rows),
+        output_path=output_path,
+        template_path=template_path,
+        field_mapping=field_mapping or load_field_mapping(None),
+    )
+
+
+def write_extraction_workbook(
+    result_rows: List[Dict[str, Any]],
+    output_path: Path,
+    template_path: Path,
+    field_mapping: FieldMapping,
+    collection_logs: List[Dict[str, Any]] | None = None,
+    field_evidence: List[Dict[str, Any]] | None = None,
+    conflict_evidence: List[Dict[str, Any]] | None = None,
+    extract_evaluations: List[Dict[str, Any]] | None = None,
+    failed_records: List[Dict[str, Any]] | None = None,
+) -> Path:
     output_path = Path(output_path)
     ensure_dir(output_path.parent)
-    field_mapping = field_mapping or load_field_mapping(None)
+    workbook = _new_or_template_workbook(template_path)
 
-    if template_path.exists():
-        workbook = load_workbook(template_path)
-        worksheet = workbook.active
-    else:
-        workbook = Workbook()
-        worksheet = workbook.active
+    result_sheet = workbook.create_sheet("结果数据")
+    ensure_headers(result_sheet, field_mapping)
+    append_rows(result_sheet, result_rows, field_mapping)
+    format_worksheet(result_sheet, field_mapping)
 
-    ensure_headers(worksheet, field_mapping)
-    append_rows(worksheet, rows, field_mapping)
-    format_worksheet(worksheet, field_mapping)
+    write_dict_sheet(workbook, "采集日志", collection_logs or [], COLLECTION_LOG_HEADERS)
+    write_dict_sheet(workbook, "字段证据", field_evidence or [], FIELD_EVIDENCE_HEADERS)
+    write_dict_sheet(workbook, "冲突证据", conflict_evidence or [], CONFLICT_EVIDENCE_HEADERS)
+    write_dict_sheet(workbook, "抽取评估", extract_evaluations or [], EXTRACT_EVAL_HEADERS)
+    write_dict_sheet(workbook, "失败记录", failed_records or [], FAILED_RECORD_HEADERS)
+
     workbook.save(output_path)
     return output_path
 
@@ -75,6 +105,67 @@ def format_worksheet(worksheet, field_mapping: FieldMapping | None = None) -> No
                 cell.alignment = Alignment(wrap_text=True, vertical="top")
             else:
                 cell.alignment = Alignment(vertical="top")
+        worksheet.column_dimensions[letter].width = min(max(max_length + 2, 10), 45)
+
+
+COLLECTION_LOG_HEADERS = [
+    "source_id",
+    "info_id",
+    "title",
+    "source_url",
+    "status",
+    "attempt",
+    "input_mode",
+    "ocr_triggered",
+    "ocr_trigger_reason",
+    "image_count",
+    "ocr_success_count",
+    "ocr_failure_count",
+    "llm_format",
+    "llm_parse_success",
+    "need_manual_review",
+    "review_reason",
+    "output_rows",
+    "error",
+]
+FIELD_EVIDENCE_HEADERS = ["source_id", "info_id", "record_index", "row_index", "field", "value", "evidence", "confidence", "source", "rule_name", "attempt", "chosen"]
+CONFLICT_EVIDENCE_HEADERS = ["source_id", "info_id", "record_index", "row_index", "field", "rule_value", "llm_value", "chosen_value", "reason", "rule_source", "llm_source", "attempt"]
+EXTRACT_EVAL_HEADERS = [
+    "record_index",
+    "row_index",
+    "attempt",
+    "Title",
+    "SourceURL",
+    "confidence_score",
+    "confidence_level",
+    "confidence_reason",
+    "should_retry_with_ocr",
+    "ocr_trigger_reason",
+    "evidence_score",
+    "key_field_score",
+    "ocr_risk_score",
+]
+FAILED_RECORD_HEADERS = ["phase", "record_index", "source_id", "info_id", "Title", "SourceURL", "error"]
+
+
+def write_dict_sheet(workbook, title: str, rows: List[Dict[str, Any]], headers: List[str]) -> None:
+    worksheet = workbook.create_sheet(title)
+    for index, header in enumerate(headers, start=1):
+        cell = worksheet.cell(row=1, column=index)
+        cell.value = header
+        cell.font = Font(bold=True)
+        cell.fill = PatternFill("solid", fgColor="D9EAF7")
+    for row in rows:
+        worksheet.append([row.get(header, "") for header in headers])
+    worksheet.freeze_panes = "A2"
+    worksheet.auto_filter.ref = f"A1:{get_column_letter(len(headers))}{worksheet.max_row}"
+    for column_index, header in enumerate(headers, start=1):
+        letter = get_column_letter(column_index)
+        max_length = len(header)
+        for cell in worksheet[letter]:
+            value = "" if cell.value is None else str(cell.value)
+            max_length = max(max_length, min(len(value), 60))
+            cell.alignment = Alignment(wrap_text=len(value) > 30, vertical="top")
         worksheet.column_dimensions[letter].width = min(max(max_length + 2, 10), 45)
 
 

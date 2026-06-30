@@ -39,6 +39,13 @@ def _clamp_confidence(confidence: Any) -> Dict[str, float]:
     return result
 
 
+def _clamp_number(value: Any, default: float = 0.6) -> float:
+    try:
+        return max(0.0, min(1.0, float(value)))
+    except Exception:
+        return default
+
+
 def _items_from_parsed(parsed: Any) -> tuple[List[Dict[str, Any]], Dict[str, Any], Dict[str, float], bool, str]:
     if isinstance(parsed, dict) and isinstance(parsed.get("records"), list):
         records = [item for item in parsed["records"] if isinstance(item, dict)]
@@ -105,3 +112,35 @@ def extract_with_llm(
 ) -> LlmExtractionResult:
     raw_output = llm_client.extract(prompt)
     return parse_llm_extraction(raw_output, record, today, logs_dir, field_mapping)
+
+
+def llm_result_to_field_evidence(
+    llm_result: LlmExtractionResult,
+    source_id: str,
+    info_id: str,
+    attempt: str = "",
+) -> List[Dict[str, Any]]:
+    evidence_rows: List[Dict[str, Any]] = []
+    seen = set()
+    for record in llm_result.records:
+        for field, value in record.items():
+            if value in (None, "", "--"):
+                continue
+            key = (field, str(value))
+            if key in seen:
+                continue
+            seen.add(key)
+            evidence_rows.append(
+                {
+                    "source_id": source_id,
+                    "info_id": info_id,
+                    "field": field,
+                    "value": value,
+                    "evidence": str(llm_result.evidence.get(field, "") if isinstance(llm_result.evidence, dict) else ""),
+                    "confidence": _clamp_number(llm_result.confidence.get(field, 0.6) if isinstance(llm_result.confidence, dict) else 0.6),
+                    "source": "llm",
+                    "rule_name": "llm_v2",
+                    "attempt": attempt,
+                }
+            )
+    return evidence_rows

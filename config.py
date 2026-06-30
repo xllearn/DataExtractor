@@ -77,6 +77,8 @@ def build_arg_parser(settings: Settings) -> argparse.ArgumentParser:
     parser.add_argument("--keyword-mode", choices=["or", "and"], default="")
     parser.add_argument("--selected-ids", default="")
     parser.add_argument("--llm-format", choices=["v2", "legacy"], default="v2")
+    parser.add_argument("--table-config", default="config/table_mapping.yml")
+    parser.add_argument("--no-llm", action="store_true")
     parser.add_argument("--input-xlsx", default="")
     parser.add_argument("--output-dir", default=str(settings.output_dir))
     parser.add_argument("--no-ocr", action="store_true")
