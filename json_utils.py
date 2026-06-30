@@ -4,15 +4,23 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List
 
+from field_mapping import FieldMapping, load_field_mapping, normalize_record_fields
 from utils import EXCEL_HEADERS, apply_default_mappings, create_fallback_row, ensure_dir
 
 
-def normalize_llm_rows(raw_output: Any, record: Dict[str, Any], today: str, logs_dir: Path) -> List[Dict[str, Any]]:
+def normalize_llm_rows(
+    raw_output: Any,
+    record: Dict[str, Any],
+    today: str,
+    logs_dir: Path,
+    field_mapping: FieldMapping | None = None,
+) -> List[Dict[str, Any]]:
+    field_mapping = field_mapping or load_field_mapping(None)
     try:
         parsed = parse_llm_json(raw_output)
     except Exception:
         save_failed_llm_output(raw_output, logs_dir)
-        return [create_fallback_row(record, today)]
+        return [normalize_record_fields(create_fallback_row(record, today), field_mapping)]
 
     if isinstance(parsed, dict):
         items = [parsed]
@@ -26,11 +34,15 @@ def normalize_llm_rows(raw_output: Any, record: Dict[str, Any], today: str, logs
     for item in items:
         if not isinstance(item, dict):
             continue
-        row = {header: item.get(header, "--") for header in EXCEL_HEADERS}
-        rows.append(apply_default_mappings(row, record, today))
+        row = normalize_record_fields(item, field_mapping)
+        row = apply_default_mappings(row, record, today)
+        for header, value in (record.get("_direct_fields") or {}).items():
+            if header in EXCEL_HEADERS and value not in (None, ""):
+                row[header] = value
+        rows.append(normalize_record_fields(row, field_mapping))
 
     if not rows:
-        rows.append(create_fallback_row(record, today))
+        rows.append(normalize_record_fields(create_fallback_row(record, today), field_mapping))
     return rows
 
 

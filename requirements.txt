@@ -6,5 +6,7 @@ requests
 openpyxl
 pillow
 openai
+PyYAML
+SQLAlchemy
 paddleocr
 paddlepaddle

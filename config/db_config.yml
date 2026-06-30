@@ -1,0 +1,27 @@
+database:
+  url: "${DATABASE_URL}"
+
+source:
+  table: ""
+  id_column: ""
+  info_id_column: ""
+  title_column: "Title"
+  html_column: "Content"
+  text_column: ""
+  article_time_column: ""
+  audit_time_column: "AuditTime"
+  region_column: "areaname"
+  source_url_column: "SourceURL"
+  related_info_column: ""
+  insurance_type_column: "insurancetypename"
+
+query:
+  default_limit: 50
+  keyword_mode: "or"
+
+direct_field_columns:
+  文章时间: "AuditTime"
+  审核日期: ""
+  info_id: "info_id"
+  地区名称: "areaname"
+  保险类型: "insurancetypename"

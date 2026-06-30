@@ -1,6 +1,7 @@
 import json
 from typing import Any, Dict
 
+from field_mapping import FieldMapping, load_field_mapping
 from utils import EXCEL_HEADERS, build_region_name, format_datetime_value
 
 
@@ -10,7 +11,9 @@ def build_extract_prompt(
     tables_text: str,
     image_ocr_text: str,
     today: str,
+    field_mapping: FieldMapping | None = None,
 ) -> str:
+    field_mapping = field_mapping or load_field_mapping(None)
     meta = {
         "Title": record.get("Title"),
         "Source": record.get("Source"),
@@ -57,10 +60,11 @@ def build_extract_prompt(
 15. 输出必须是 JSON 数组。
 16. JSON 数组中的每个对象必须包含完整 26 个字段。
 17. 字段名必须和 Excel 表头完全一致。
-18. 不要输出任何解释文字。
+18. 只能输出固定 26 列字段，不要输出多余字段；缺失字段填空字符串、"--" 或默认值。
+19. 不要输出任何解释文字。
 
 固定 Excel 字段如下：
-{json.dumps(EXCEL_HEADERS, ensure_ascii=False, indent=2)}
+{json.dumps(field_mapping.headers or EXCEL_HEADERS, ensure_ascii=False, indent=2)}
 
 默认值如下：
 {json.dumps(defaults, ensure_ascii=False, indent=2, default=str)}

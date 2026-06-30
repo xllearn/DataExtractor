@@ -36,6 +36,46 @@ copy .env.example .env
 
 不要把数据库密码或 API Key 写入代码。
 
+## 配置化数据库读取
+
+项目支持新的 `config/db_config.yml`。默认文件保留为空表名，因此未配置 `DATABASE_URL` 和表名时会自动回退到旧的 `.env` + `db.py` 读取方式。
+
+`DATABASE_URL` 建议放在 `.env` 或环境变量中，例如：
+
+```text
+DATABASE_URL=mysql+pymysql://user:password@127.0.0.1:3306/database?charset=utf8mb4
+```
+
+不要把真实账号、密码或 API Key 提交到仓库。`database.url` 支持 `${DATABASE_URL}` 形式：
+
+```yaml
+database:
+  url: "${DATABASE_URL}"
+source:
+  table: articles
+  id_column: id
+  info_id_column: info_id
+  title_column: Title
+  html_column: Content
+  audit_time_column: AuditTime
+  region_column: areaname
+  source_url_column: SourceURL
+  insurance_type_column: insurancetypename
+```
+
+常用示例：
+
+```bash
+python main.py --config config/db_config.yml --limit 20 --mode merge
+python main.py --selected-ids "1,2,3" --limit 20
+python main.py --keyword "医保 报销" --keyword-mode or --limit 20
+python main.py --keyword "医保 报销" --keyword-mode and --limit 20
+```
+
+优先级：`--input-xlsx` 最高，不连接数据库；`--selected-ids` 高于 `--keyword`，两者同时存在时只按指定 ID 读取，并在日志中记录覆盖关系。
+
+关键词会按内置同义词扩展后检索，例如 `医保` 会扩展为 `医保 / 医疗保险 / 基本医保 / 医保基金`，`报销` 会扩展为 `报销 / 报付 / 支付 / 补偿 / 待遇`。检索 SQL 使用参数化参数，字段名和表名会做基础合法性校验。
+
 ## 模板和样本
 
 如果有固定样式模板，把它放到：
@@ -102,6 +142,12 @@ python main.py --input-xlsx "samples/db/新建 XLSX 工作表.xlsx" --limit 1 --
 
 默认情况下，程序首轮抽取不会执行 OCR。首轮大模型抽取完成后，程序会先计算置信度；如果 `confidence_score < 70` 且 `ocr_risk_score < 80`，并且未传 `--no-ocr`，才会下载图片、执行 OCR、重新构造 prompt 并二次抽取。二次抽取结果会覆盖首轮结果；如果 OCR 全部失败，则保留首轮结果，并把失败原因写入评估日志。
 
+字段配置路径可用 `--field-config` 指定：
+
+```bash
+python main.py --field-config config/field_mapping.yml --limit 5 --mode merge
+```
+
 ## 输出模式
 
 `single` 是默认模式。每条输入记录生成一个独立 xlsx，文件名类似：
@@ -120,9 +166,18 @@ python main.py --input-xlsx "samples/db/新建 XLSX 工作表.xlsx" --limit 1 --
 
 输出目录默认是 `outputs/`，可用 `--output-dir` 修改。
 
-## 固定表头
+## 固定表头和字段映射
 
-输出 Excel 固定 26 列，顺序由程序内置常量控制。缺失字段统一填 `--`。默认字段会在模型返回后再次覆盖或补齐，其中：
+输出 Excel 固定 26 列，顺序由 `config/field_mapping.yml` 校验并控制；配置文件不存在时使用 `utils.EXCEL_HEADERS` 兜底。配置中的 `headers` 必须与固定 26 列完全一致，缺失、重复或顺序错误都会停止运行并给出清晰错误。
+
+最终写入 Excel 前会再次标准化：
+
+- 只保留固定 26 列，多余字段不会写入
+- 缺失字段使用 `defaults` 中的默认值，没有默认值则填空字符串
+- LLM 返回字段别名会映射到标准字段，例如 `支付比例` -> `报销比例`，`起付线` -> `起付标准`，`最高支付限额` -> `补助限额`
+- 数据库配置中的 `direct_field_columns` 会写入 `_direct_fields`，在 LLM 解析后覆盖到最终 26 列
+
+默认字段会在模型返回后再次覆盖或补齐，其中：
 
 - `文章时间` 使用 `2025/5/20` 这种日期格式
 - `info_id` 保持空白

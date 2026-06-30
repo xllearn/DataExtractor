@@ -4,13 +4,17 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 from config import PROJECT_ROOT, build_arg_parser, load_settings
+from config_loader import ConfigError, load_db_config, parse_selected_ids, validate_db_config_ready
 from confidence import evaluate_rows, mark_ocr_failed
 from db import fetch_records
+from db_reader import DbReaderError, fetch_configured_records
 from excel_writer import build_merge_output_path, build_single_output_path, write_rows_to_workbook
+from field_mapping import FieldMapping, FieldMappingError, load_field_mapping
 from html_parser import parse_html_content
 from image_ocr import process_image_ocr
 from input_xlsx import read_records_from_xlsx
 from json_utils import normalize_llm_rows
+from keyword_utils import expand_keyword_groups
 from llm_client import LLMClient
 from prompts import build_extract_prompt
 from utils import append_jsonl, ensure_dir, today_yyyymmdd
@@ -57,6 +61,7 @@ def extract_record_rows(
     ocr_enabled: bool,
     debug: bool,
     logger: logging.Logger | None,
+    field_mapping: FieldMapping | None = None,
     ocr_func=process_image_ocr,
 ) -> List[Dict[str, Any]]:
     logger = logger or logging.getLogger("db_to_excel_extractor")
@@ -77,6 +82,7 @@ def extract_record_rows(
         attempt="initial",
         debug=debug,
         logger=logger,
+        field_mapping=field_mapping,
     )
     initial_evals = evaluate_rows(
         initial_rows,
@@ -125,6 +131,7 @@ def extract_record_rows(
         attempt="ocr_retry",
         debug=debug,
         logger=logger,
+        field_mapping=field_mapping,
     )
     retry_evals = evaluate_rows(
         retry_rows,
@@ -152,8 +159,9 @@ def extract_once(
     attempt: str,
     debug: bool,
     logger: logging.Logger,
+    field_mapping: FieldMapping | None = None,
 ) -> List[Dict[str, Any]]:
-    prompt = build_extract_prompt(record, clean_text, tables_text, image_ocr_text, today)
+    prompt = build_extract_prompt(record, clean_text, tables_text, image_ocr_text, today, field_mapping=field_mapping)
     try:
         raw_output = llm_client.extract(prompt)
         logger.info("大模型调用是否成功: true, attempt=%s", attempt)
@@ -172,7 +180,7 @@ def extract_once(
             },
         )
 
-    rows = normalize_llm_rows(raw_output, record, today, logs_dir)
+    rows = normalize_llm_rows(raw_output, record, today, logs_dir, field_mapping=field_mapping)
     logger.info("模型返回行数: %s, attempt=%s", len(rows), attempt)
     if debug:
         logger.debug("抽取上下文: attempt=%s image_count=%s ocr_text_length=%s", attempt, image_count, len(image_ocr_text or ""))
@@ -227,15 +235,61 @@ def main() -> int:
     logger.info("程序启动参数: %s", vars(args))
 
     try:
+        field_mapping = load_field_mapping(args.field_config)
+        logger.info("字段配置加载完成: headers=%s", len(field_mapping.headers))
+    except FieldMappingError as exc:
+        logger.error("字段配置错误: %s", exc)
+        append_jsonl(logs_dir / "failed_records.jsonl", {"phase": "field_config", "error": str(exc)})
+        return 1
+
+    try:
         if args.input_xlsx:
             input_path = resolve_input_path(args.input_xlsx)
             logger.info("当前输入模式: input-xlsx, path=%s", input_path)
+            if args.keyword:
+                logger.info("input-xlsx 模式忽略数据库关键词检索: keyword=%s", args.keyword)
             records = read_records_from_xlsx(input_path, limit=args.limit, offset=args.offset)
         else:
-            logger.info("当前输入模式: MySQL, table=%s", settings.db_table)
-            records = fetch_records(settings, limit=args.limit, offset=args.offset, where=args.where)
+            selected_ids = parse_selected_ids(args.selected_ids)
+            db_config = load_db_config(args.config)
+            explicit_config = "--config" in sys.argv
+            keyword_groups = expand_keyword_groups(args.keyword)
+            keyword_mode = args.keyword_mode or db_config.query.keyword_mode
+            if keyword_mode not in {"or", "and"}:
+                raise ConfigError("--keyword-mode 只能是 or 或 and")
+
+            if selected_ids and keyword_groups:
+                logger.info("--selected-ids 优先于 --keyword，已忽略关键词检索")
+
+            if db_config.use_configured_reader:
+                validate_db_config_ready(db_config)
+                logger.info("当前输入模式: configured-db, table=%s", db_config.source.table)
+                logger.info(
+                    "关键词检索: enabled=%s raw=%s mode=%s groups=%s",
+                    bool(keyword_groups and not selected_ids),
+                    args.keyword,
+                    keyword_mode,
+                    keyword_groups if keyword_groups and not selected_ids else [],
+                )
+                records = fetch_configured_records(
+                    db_config,
+                    limit=args.limit,
+                    offset=args.offset,
+                    selected_ids=selected_ids,
+                    keyword_groups=[] if selected_ids else keyword_groups,
+                    keyword_mode=keyword_mode,
+                )
+                logger.info("配置化数据库实际检索记录数: %s", len(records))
+            elif explicit_config and db_config.exists:
+                validate_db_config_ready(db_config)
+                records = []
+            else:
+                if args.keyword:
+                    logger.info("未启用配置化数据库读取，旧 db.py 流程暂不处理 --keyword")
+                logger.info("当前输入模式: MySQL, table=%s", settings.db_table)
+                records = fetch_records(settings, limit=args.limit, offset=args.offset, where=args.where)
         logger.info("读取到记录数: %s", len(records))
-    except Exception as exc:
+    except (ConfigError, DbReaderError, Exception) as exc:
         logger.exception("读取输入失败: %s", exc)
         append_jsonl(logs_dir / "failed_records.jsonl", {"phase": "read_input", "error": str(exc)})
         return 1
@@ -262,11 +316,12 @@ def main() -> int:
                 ocr_enabled=ocr_enabled,
                 debug=args.debug,
                 logger=logger,
+                field_mapping=field_mapping,
             )
 
             if args.mode == "single":
                 output_path = build_single_output_path(record, output_dir, args.offset + index)
-                write_rows_to_workbook(rows, output_path, template_path)
+                write_rows_to_workbook(rows, output_path, template_path, field_mapping=field_mapping)
                 logger.info("Excel 输出路径: %s", output_path)
                 output_paths.append(output_path)
             else:
@@ -287,7 +342,7 @@ def main() -> int:
 
     if args.mode == "merge":
         output_path = build_merge_output_path(output_dir)
-        write_rows_to_workbook(all_rows, output_path, template_path)
+        write_rows_to_workbook(all_rows, output_path, template_path, field_mapping=field_mapping)
         logger.info("Excel 输出路径: %s", output_path)
         output_paths.append(output_path)
 
