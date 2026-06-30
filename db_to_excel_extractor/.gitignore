@@ -1,0 +1,16 @@
+.env
+.venv/
+.venv_ocr/
+.idea/
+
+outputs/*
+!outputs/.gitkeep
+
+logs/*
+!logs/.gitkeep
+
+temp_images/*
+!temp_images/.gitkeep
+
+__pycache__/
+*.pyc

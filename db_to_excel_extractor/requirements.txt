@@ -1,0 +1,10 @@
+pymysql
+python-dotenv
+beautifulsoup4
+lxml
+requests
+openpyxl
+pillow
+openai
+paddleocr
+paddlepaddle
