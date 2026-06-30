@@ -9,9 +9,124 @@ FIELD_ALIASES: Dict[str, List[str]] = {
     "报销比例": ["报销比例", "支付比例", "报付比例", "补偿比例"],
     "起付标准": ["起付标准", "起付线", "起付金额"],
     "补助限额": ["年度最高支付限额", "最高支付限额", "封顶线", "年度限额", "补助限额"],
+    "病种名称": ["病种名称", "疾病名称", "特定病种", "保障病种", "纳入病种", "病种范围"],
 }
 
 VALUE_PATTERN = r"([0-9]+(?:\.[0-9]+)?\s*(?:%|％|元|万元|万|亿元)?)"
+DISEASE_FIELD = "病种名称"
+GENERIC_DISEASE_TERMS = {"大病", "既往症", "慢性病", "特殊病", "疾病病", "了解症"}
+INVALID_DISEASE_MARKERS = [
+    "旨在",
+    "减轻",
+    "保障",
+    "覆盖",
+    "范围",
+    "了解",
+    "花小钱",
+    "保大病",
+    "发生的",
+    "费用",
+    "医疗费用",
+    "基金支付",
+    "保险金",
+    "报销",
+    "赔付",
+    "定点医药机构",
+]
+INVALID_DISEASE_SEGMENT_MARKERS = [
+    "美国",
+    "加拿大",
+    "英国",
+    "欧洲",
+    "国家",
+    "国立",
+    "国际",
+    "通行",
+    "针对",
+    "分类",
+    "协会",
+    "参保",
+    "群众",
+    "一旦",
+    "高发",
+    "高价",
+    "自费",
+    "费用",
+    "医疗",
+    "基础",
+    "主要表现",
+    "一组",
+]
+DISEASE_CORE_PATTERNS = [
+    r"帕金森病",
+    r"高血压",
+    r"糖尿病",
+    r"恶性肿瘤",
+    r"白血病",
+    r"罕见病",
+    r"[\u4e00-\u9fff]{1,8}综合征",
+    r"[\u4e00-\u9fff]{1,8}癌",
+    r"[\u4e00-\u9fff]{1,8}瘤",
+]
+DISEASE_CORE_RE = re.compile("|".join(f"(?:{pattern})" for pattern in DISEASE_CORE_PATTERNS))
+DISEASE_SPLIT_RE = re.compile(r"[、,，/；;和及与]")
+
+
+def _clean_disease_segment(value: str) -> str:
+    text = re.sub(r"\s+", "", str(value or ""))
+    return text.strip("：:，,。；;、（）()[]【】\"'“”‘’")
+
+
+def _unique_join(values: List[str]) -> str:
+    unique: List[str] = []
+    for value in values:
+        if value and value not in unique:
+            unique.append(value)
+    return "、".join(unique)
+
+
+def _clean_core_candidate(value: str) -> str:
+    candidate = _clean_disease_segment(value)
+    for token in ["的", "为", "对", "按", "等", "或"]:
+        if token in candidate:
+            candidate = candidate.split(token)[-1]
+    for token in ["患了", "患有", "确诊"]:
+        if token in candidate:
+            candidate = candidate.split(token)[-1]
+    if len(candidate) < 2 or candidate in GENERIC_DISEASE_TERMS:
+        return ""
+    return candidate
+
+
+def normalize_disease_name(value: str) -> str:
+    text = _clean_disease_segment(value)
+    if not text:
+        return ""
+
+    normalized_parts: List[str] = []
+    for segment in [part for part in DISEASE_SPLIT_RE.split(text) if part]:
+        segment = _clean_disease_segment(segment)
+        if not segment or segment in GENERIC_DISEASE_TERMS:
+            continue
+        if any(marker in segment for marker in INVALID_DISEASE_SEGMENT_MARKERS):
+            continue
+        matches = [match.group(0) for match in DISEASE_CORE_RE.finditer(segment)]
+        if matches:
+            normalized_parts.extend(candidate for candidate in (_clean_core_candidate(match) for match in matches) if candidate)
+            continue
+        if any(marker in segment for marker in INVALID_DISEASE_MARKERS):
+            continue
+        if len(segment) <= 15 and segment not in GENERIC_DISEASE_TERMS and DISEASE_CORE_RE.fullmatch(segment):
+            normalized_parts.append(segment)
+    return _unique_join(normalized_parts)
+
+
+def is_valid_disease_name(value: str) -> bool:
+    text = _clean_disease_segment(value)
+    if not text:
+        return False
+    normalized = normalize_disease_name(text)
+    return bool(normalized) and normalized == text and len(text) <= 30
 
 
 def _evidence(source_id: str, info_id: str, field: str, value: str, evidence: str, confidence: float, rule_name: str) -> Dict[str, Any]:
@@ -40,6 +155,8 @@ def _field_aliases(field_mapping: FieldMapping) -> Dict[str, List[str]]:
 def _find_field_values(text: str, field_mapping: FieldMapping) -> List[Tuple[str, str, str]]:
     hits: List[Tuple[str, str, str]] = []
     for field, aliases in _field_aliases(field_mapping).items():
+        if field == DISEASE_FIELD:
+            continue
         for alias in aliases:
             pattern = re.compile(rf"({re.escape(alias)}\s*(?:[:：为是]|不超过|不高于)?\s*{VALUE_PATTERN})")
             for match in pattern.finditer(text):
@@ -62,7 +179,6 @@ def _find_context_hints(text: str) -> List[Tuple[str, str, str, str, float]]:
         ("人员类型", r"(参保职工|参保居民|职工|居民)", "context_person_type", 0.65),
         ("医院类型", r"([一二三]级医院|基层医疗机构|定点医疗机构)", "context_hospital_type", 0.7),
         ("类型", r"(门诊慢特病|门诊统筹|住院待遇|特药保障|个人账户)", "context_benefit_type", 0.7),
-        ("病种名称", r"([\u4e00-\u9fa5]{2,12}(?:病|症))", "context_disease_name", 0.55),
     ]
     for field, pattern, rule_name, confidence in context_rules:
         match = re.search(pattern, text)
@@ -74,6 +190,21 @@ def _find_context_hints(text: str) -> List[Tuple[str, str, str, str, float]]:
             elif field == "类型" and value == "住院待遇":
                 hints.append(("标化类型", "住院", value, "context_standard_type", 0.65))
     return hints
+
+
+def _find_disease_names(text: str, field_mapping: FieldMapping) -> List[Tuple[str, str, str, str, float]]:
+    aliases = _field_aliases(field_mapping).get(DISEASE_FIELD, [DISEASE_FIELD])
+    alias_pattern = "|".join(re.escape(alias) for alias in aliases)
+    strong_pattern = re.compile(rf"((?:{alias_pattern})\s*[:：为是]\s*([^\n。；;]+))")
+    for match in strong_pattern.finditer(text):
+        normalized = normalize_disease_name(match.group(2))
+        if normalized:
+            return [(DISEASE_FIELD, normalized, match.group(1).strip(), "disease_name_strong_context", 0.82)]
+
+    normalized = normalize_disease_name(text)
+    if normalized:
+        return [(DISEASE_FIELD, normalized, normalized, "disease_name_weak_core", 0.58)]
+    return []
 
 
 def extract_key_value_records(
@@ -91,6 +222,11 @@ def extract_key_value_records(
             if field not in record:
                 record[field] = value
                 result.field_evidence.append(_evidence(source_id, info_id, field, value, evidence_text, 0.8, "kv_pattern"))
+
+        for field, value, evidence_text, rule_name, confidence in _find_disease_names(source_text, field_mapping):
+            if field not in record:
+                record[field] = value
+                result.field_evidence.append(_evidence(source_id, info_id, field, value, evidence_text, confidence, rule_name))
 
         insurance_value, insurance_evidence = _find_insurance_type(source_text)
         if insurance_value:

@@ -166,6 +166,12 @@ python main.py --field-config config/field_mapping.yml --limit 5 --mode merge
 python main.py --table-config config/table_mapping.yml --limit 5 --mode merge
 ```
 
+LLM 配置路径可用 `--llm-config` 指定，默认读取 `config/llm_config.yml`，其中可通过 `${LLM_API_KEY}` 等占位从环境变量读取：
+
+```bash
+python main.py --llm-config config/llm_config.yml --limit 5 --mode merge
+```
+
 LLM 输出格式默认使用 v2 JSON object，可用 `--llm-format legacy` 回退旧 JSON 数组 prompt：
 
 ```bash
@@ -261,6 +267,8 @@ config/table_mapping.yml
 
 当前支持抽取起付标准、补助限额、报销比例、人员类型、保险类型、医院类型、病种名称、类型和标化类型等字段。规则失败不会中断单条记录处理。
 
+“病种名称”正文规则会做额外清洗：优先从 `病种名称`、`疾病名称`、`特定病种`、`保障病种`、`纳入病种`、`病种范围` 等强上下文抽取；普通正文只保留明确核心疾病词，例如 `帕金森病`、`高血压`、`糖尿病`、`恶性肿瘤` 等。宣传语、费用描述、人物/地名/时间长句，以及 `大病`、`既往症`、`慢性病`、`特殊病` 等泛化词不会直接写入病种名称。
+
 ## 规则和 LLM 融合
 
 程序会把数据库直接字段、表格规则、正文规则和 LLM 结果融合为最终输出。融合优先级固定为：
@@ -270,6 +278,8 @@ config/table_mapping.yml
 ```
 
 LLM 主要用于补充规则没有抽到的字段。规则和 LLM 对同一字段给出不同值时，程序保留高优先级值，生成冲突证据，并标记 `need_manual_review=true`。如果规则记录数和 LLM 记录数不一致，程序会尽量按顺序对齐或追加 LLM 记录，同时标记人工复核。
+
+“病种名称”有特殊融合规则：如果正文规则给出明显长句，而 LLM 给出其中的核心疾病名且通过校验，则优先采用 LLM；如果正文规则和 LLM 都不可信，则清空病种名称并标记人工复核。表格中明确表头为 `病种名称`、`疾病名称`、`特定病种` 等时仍作为高置信来源。
 
 OCR retry 现在基于融合后的结果做置信度评估。首轮融合结果低置信度且存在图片风险时才 OCR；OCR 成功后会用 OCR 文本重新调用 LLM v2、重新融合、重新评估。程序会比较首轮和 OCR retry 的置信度：retry 解析失败、没有结果或置信度明显下降时保留首轮，否则采用 OCR retry。日志会记录 OCR 触发原因、成功/失败图片数、OCR 前后置信度、是否改善和最终采用 attempt。
 

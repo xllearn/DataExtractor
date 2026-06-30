@@ -1,0 +1,153 @@
+# DataExtractor 测试报告
+
+## 基本信息
+
+- 测试时间：2026-06-30 11:20:21
+- 当前分支：codex/db-to-excel-extractor
+- 当前 commit：08d0b4cf
+- Python 版本：3.14.0 (MSC v.1944 64 bit, AMD64)
+- 依赖安装情况：核心测试依赖可用，已确认 pytest 9.1.1、openpyxl、PyYAML、SQLAlchemy、beautifulsoup4、lxml、requests、openai 等已安装；当前环境未安装 paddleocr/paddlepaddle，但测试均通过 mock/fake 路径覆盖 OCR，不依赖真实 OCR。
+
+## 执行命令
+
+```bash
+python -m unittest discover -s tests
+pytest -q
+C:\Users\admin\AppData\Local\Programs\Python\Python314\python.exe -m unittest discover -s tests -v
+C:\Users\admin\AppData\Local\Programs\Python\Python314\python.exe -m pytest -q --junitxml logs\pytest-results.xml
+C:\Users\admin\AppData\Local\Programs\Python\Python314\python.exe main.py --help
+C:\Users\admin\AppData\Local\Programs\Python\Python314\python.exe main.py --input-xlsx "samples/db/新建 XLSX 工作表.xlsx" --limit 1 --mode merge --dry-run --log-dir logs/readme_dry_run
+```
+
+说明：`python` 命令在当前 Windows PATH 中指向 Microsoft Store shim，直接运行 `python -m unittest discover -s tests` 返回 9009；随后改用实际解释器路径完成测试。`pytest` 直接命令在 PowerShell 中不可识别，`python -m pytest` 可用。
+
+## 测试统计
+
+| 命令 | 总数 | 通过 | 失败 | 错误 | 跳过 | 结果 |
+| --- | ---: | ---: | ---: | ---: | ---: | --- |
+| unittest discover | 58 | 58 | 0 | 0 | 0 | OK |
+| pytest -q | 58 | 58 | 0 | 0 | 0 | OK |
+| 主流程 dry-run | 1 条输入 | 1 | 0 | 0 | 0 | OK |
+
+失败测试：无。
+
+## 已覆盖功能列表
+
+- 项目结构：核心模块、README、验收清单、开发日志、requirements、tests 目录均存在；已补齐 `config/llm_config.yml`。
+- 配置加载：db config、环境变量替换、字段配置、固定 26 列顺序、字段别名、table mapping、strict-config、错误 YAML、缺字段配置。
+- 数据库读取：配置化 SQL 构造、旧 db.py 兼容入口、selected_ids 优先 keyword、limit/offset/default_limit、direct_field_columns、安全字段/表名校验、参数化 keyword/selected_ids。
+- 关键词与同义词：医保、报销、多关键词、空关键词、or/and SQL 组合相关路径。
+- 字段映射：别名归一化、额外字段删除、缺失字段补齐、默认值、固定 26 列顺序。
+- HTML 与表格规则：HTML 正文解析、图片 URL、HTML/Markdown 表格、别名表头、多行、重复去重、规则错误收集。
+- 正文规则：报销比例、起付标准、补助限额、保险类型、医院类型等常见表达，规则失败不阻塞流程。
+- LLM v2：v2 object、旧 array、旧单 object、非法 JSON fallback、raw output 保存、direct_fields 应用、evidence/confidence 转换。
+- record_fusion：数据库直接字段、表格规则、正文规则、LLM、默认值优先级，冲突证据、人工复核、数量不一致。
+- 置信度与 OCR retry：高/低置信度、无图/有图、no-llm/no-ocr、OCR 成功/失败、retry 取舍、评估日志。
+- Excel 多 sheet：结果数据、采集日志、字段证据、冲突证据、抽取评估、失败记录、空数据表头、模板额外 sheet 保留、公式注入清洗。
+- CLI：`--config`、`--field-config`、`--table-config`、`--llm-config`、`--keyword`、`--keyword-mode`、`--selected-ids`、`--llm-format`、`--limit`、`--offset`、`--mode`、`--input-xlsx`、`--no-ocr`、`--no-llm`、`--log-dir`、`--dry-run`、`--max-record-errors`、`--fail-fast`、`--strict-config`、`--no-excel`、`--save-intermediate`、`--debug`。
+- 安全与稳定性：敏感信息脱敏、数据库 URL 脱敏、Excel 公式注入、配置错误、Excel 写入失败、单条失败记录。
+- README 示例：已检查 `python main.py` 系列命令语法，`main.py --help` 可识别 README 涉及参数；本地 Excel dry-run 示例跑通。
+
+## 未覆盖或覆盖不足功能列表
+
+- 真实生产数据库连接未测，符合“不依赖真实生产数据库”的约束；当前通过 SQL 构造与 mock/fake 路径覆盖。
+- 真实 LLM API 未调用，符合“不依赖真实 LLM API”的约束；通过 fake client 覆盖解析与调用路径。
+- 真实 PaddleOCR 未调用，符合“不依赖真实 OCR”的约束；当前环境也未安装 paddleocr/paddlepaddle。
+- README 中所有数据库示例未做真实执行，因为默认配置没有真实 DATABASE_URL/table，已通过 argparse/help 与配置化路径测试验证语法和参数识别。
+- `--llm-config` 已可被 CLI 识别，默认配置文件存在，并已接入运行时 YAML 读取，可覆盖 LLM provider/api_key/base_url/model；测试覆盖参数解析与环境变量占位替换。
+
+## 发现的问题清单
+
+### P2：当前 PATH 的 `python` 命令不可用
+
+- 复现步骤：在项目根目录运行 `python -m unittest discover -s tests`。
+- 实际结果：返回 9009，PATH 中 `python.exe` 指向 Microsoft Store shim。
+- 影响范围：影响按文档直接复制命令运行测试，不影响代码逻辑。
+- 建议修复：本机安装 Python 时启用 PATH，或在 README 测试命令中补充 `py -m ...` / 显式解释器路径说明。
+- 状态：尚未修复，属于环境问题。
+
+### P3：`pytest` 直接命令在当前 PowerShell 中不可识别
+
+- 复现步骤：运行 `pytest -q`。
+- 实际结果：PowerShell 报 `pytest` 不是可识别命令。
+- 影响范围：仅影响本机命令入口；`python -m pytest` 正常，测试通过。
+- 建议修复：确保 Scripts 目录在 PATH，或 README 中补充 `python -m pytest -q`。
+- 状态：尚未修复，属于环境问题。
+
+### P2：`--llm-config` 原先未被 argparse 识别，`config/llm_config.yml` 原先不存在
+
+- 复现步骤：运行修复前的 `python main.py --llm-config config/llm_config.yml --help` 或检查配置目录。
+- 实际结果：参数不存在，配置文件不存在。
+- 影响范围：影响用户指定 LLM 配置文件的兼容路径和验收项。
+- 建议修复：增加 CLI 参数和默认配置文件，并读取 YAML 覆盖 LLM Settings。
+- 状态：已修复；新增 `--llm-config` 参数、默认 `config/llm_config.yml`、运行时 YAML 覆盖逻辑和测试断言。
+
+### P3：`README.md` 原先未包含 `--llm-config` 示例
+
+- 复现步骤：搜索 README 示例命令。
+- 实际结果：README 覆盖 `--llm-format`、`--field-config`、`--table-config`，未展示 `--llm-config`。
+- 影响范围：文档完整性，不影响运行。
+- 建议修复：在 LLM 配置段补充 `python main.py --llm-config config/llm_config.yml --limit 5 --mode merge`。
+- 状态：已修复。
+
+## 已修复的问题
+
+- 增加 `config.py` 中 `--llm-config` CLI 参数，默认值为 `config/llm_config.yml`。
+- 增加 `config.py` 中 LLM YAML 读取逻辑，支持 `${LLM_API_KEY}` 等环境变量占位并覆盖 provider/api_key/base_url/model。
+- 在 `main.py` 接入 `apply_llm_config`，配置错误时以 `llm_config` phase 写入失败日志并返回非 0。
+- 新增 `config/llm_config.yml`，使用 `${LLM_PROVIDER}`、`${LLM_API_KEY}`、`${LLM_BASE_URL}`、`${LLM_MODEL}` 占位，避免写入真实密钥。
+- 更新 `tests/test_configured_db_and_fields.py`，覆盖 `--llm-config` 参数解析和运行时配置覆盖。
+- 更新 `README.md`，补充 `--llm-config` 示例。
+
+## 尚未修复的问题
+
+- 环境 PATH 中 `python`/`pytest` 直接命令不可用。
+
+## 最终结论
+
+可以合并。
+
+当前无 P0/P1 阻塞问题，核心 12 阶段功能路径、异常路径和兼容路径已通过现有测试与补充测试验证；仅剩本机 PATH 中 `python`/`pytest` 直接命令不可用的环境问题。
+
+## 最终确认补充记录
+
+- 确认时间：2026-06-30 13:20:18
+- 当前 commit hash：08d0b4cf
+- `TEST_REPORT.md` 中关于 `--llm-config` 的矛盾表述已修正：当前结论为 CLI 可识别、默认配置存在、运行时已读取 YAML 并覆盖 LLM provider/api_key/base_url/model。
+- git 状态：以下修复文件尚未提交：
+  - `README.md`
+  - `config.py`
+  - `main.py`
+  - `tests/test_configured_db_and_fields.py`
+  - `TEST_REPORT.md`
+  - `config/llm_config.yml`
+- 最终非 dry-run input-xlsx 测试命令：
+
+```bash
+C:\Users\admin\AppData\Local\Programs\Python\Python314\python.exe -c "import sys,json; from unittest.mock import patch; import main; payload=json.dumps({'records':[{'Type':'fake'}],'evidence':{},'confidence':{},'need_manual_review':False,'review_reason':''}); FakeLLM=type('FakeLLM',(),{'__init__':lambda self,settings:None,'extract':lambda self,prompt:payload}); sys.argv=['main.py','--input-xlsx','samples/db/新建 XLSX 工作表.xlsx','--limit','1','--mode','merge','--no-ocr','--output-dir','outputs/final_e2e','--log-dir','logs/final_e2e']; p=patch('main.LLMClient', FakeLLM); p.start(); rc=main.main(); p.stop(); raise SystemExit(rc)"
+```
+
+- 最终非 dry-run input-xlsx 测试结果：通过，退出码 0，使用 fake LLM，未调用真实外部 LLM/OCR，实际生成 Excel。
+- 输出 Excel 路径：`C:\Users\admin\Documents\DataExtractor\outputs\final_e2e\商业补充保险抽取结果_20260630_132017.xlsx`
+- Excel sheet 验证命令：
+
+```bash
+C:\Users\admin\AppData\Local\Programs\Python\Python314\python.exe -c "from openpyxl import load_workbook; p=r'C:\Users\admin\Documents\DataExtractor\outputs\final_e2e\商业补充保险抽取结果_20260630_132017.xlsx'; wb=load_workbook(p, read_only=True); required=['结果数据','采集日志','字段证据','冲突证据','抽取评估','失败记录']; print(wb.sheetnames); missing=[s for s in required if s not in wb.sheetnames]; raise SystemExit(1 if missing else 0)"
+```
+
+- Excel sheet 验证结果：通过，包含且仅包含本次要求确认的 6 个 sheet：`结果数据`、`采集日志`、`字段证据`、`冲突证据`、`抽取评估`、`失败记录`。
+
+## 病种名称质量修复补充记录
+
+- 确认时间：2026-06-30 15:16:22
+- 当前修复范围：正文规则 `病种名称` 清洗、融合阶段病种特殊择优、LLM v2 prompt 约束、字段/表格病种名称别名、UTF-8 BOM `.env` 读取。
+- 新增测试文件：`tests/test_disease_name_quality.py`。
+- 自动化测试：
+  - `python -m unittest discover -s tests`：本机 `python` 命令不可用，改用 `py`。
+  - `py -m unittest discover -s tests -v`：69 个测试通过。
+  - `py -m pytest -q`：69 passed，30 subtests passed。
+  - `py -m compileall ...`：通过。
+- 真实 smoke：3 条真实数据通过，输出 `outputs/real_db_20/disease_fix_smoke/商业补充保险抽取结果_20260630_150917.xlsx`。
+- 真实 20 条：通过，输出 `outputs/real_db_20/disease_fix_20/商业补充保险抽取结果_20260630_151622.xlsx`；结果数据 27 行，`病种名称` 非空 12 行。
+- 病种名称检查：附件列出的错误长句、`大病/既往症/慢性病/特殊病` 泛化词，以及本轮观察到的国家/参保/高价自费类坏片段均无命中。
+- 安全检查要求：`logs/`、`outputs/`、`.env` 均不提交；`config/llm_config.yml` 保持环境变量占位，不写真实 key。

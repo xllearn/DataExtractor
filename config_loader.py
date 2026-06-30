@@ -65,7 +65,7 @@ def parse_selected_ids(value: str | None) -> List[str]:
 
 def _load_dotenv_once() -> None:
     if load_dotenv is not None:
-        load_dotenv(PROJECT_ROOT / ".env")
+        load_dotenv(PROJECT_ROOT / ".env", encoding="utf-8-sig", interpolate=False)
 
 
 def _expand_env(value: Any) -> Any:

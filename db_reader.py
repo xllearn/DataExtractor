@@ -9,8 +9,8 @@ class DbReaderError(RuntimeError):
     pass
 
 
-IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
-TABLE_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?$")
+IDENTIFIER_RE = re.compile(r"^[A-Za-z0-9_\u4e00-\u9fff]+$")
+TABLE_RE = re.compile(r"^[A-Za-z0-9_\u4e00-\u9fff]+(?:\.[A-Za-z0-9_\u4e00-\u9fff]+)?$")
 SEARCH_SOURCE_FIELDS = [
     "title_column",
     "html_column",
@@ -33,14 +33,18 @@ def validate_identifier(value: str, label: str = "字段名") -> str:
     if not value:
         return ""
     if not IDENTIFIER_RE.fullmatch(value):
-        raise DbReaderError(f"{label} 只允许普通字段名: {value}")
+        raise DbReaderError(f"{label} 只允许中文、英文字母、数字或下划线: {value}")
     return value
+
+
+def validate_column_name(value: str, label: str = "字段名") -> str:
+    return validate_identifier(value, label)
 
 
 def validate_table_name(value: str) -> str:
     value = (value or "").strip()
     if not TABLE_RE.fullmatch(value):
-        raise DbReaderError(f"source.table 只允许普通表名或 schema.table: {value}")
+        raise DbReaderError(f"source.table 只允许中文、英文字母、数字、下划线或单个 schema.table 分隔点: {value}")
     return value
 
 

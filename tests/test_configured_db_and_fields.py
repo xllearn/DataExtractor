@@ -1,6 +1,7 @@
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import sys
 
@@ -54,6 +55,32 @@ direct_field_columns:
             self.assertEqual(config.source.table, "articles")
             self.assertEqual(config.query.default_limit, 25)
             self.assertEqual(config.query.keyword_mode, "and")
+
+    def test_dotenv_database_url_keeps_dollar_sign_password(self):
+        from config_loader import load_db_config
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / ".env").write_text(
+                "DATABASE_URL=mysql+pymysql://user:p$word@127.0.0.1:3306/db?charset=utf8mb4\n",
+                encoding="utf-8-sig",
+            )
+            path = root / "db_config.yml"
+            path.write_text(
+                """
+database:
+  url: "${DATABASE_URL}"
+source:
+  table: articles
+  html_column: Content
+""",
+                encoding="utf-8",
+            )
+
+            with patch.dict(__import__("os").environ, {}, clear=True), patch("config_loader.PROJECT_ROOT", root):
+                config = load_db_config(path)
+
+        self.assertEqual(config.database_url, "mysql+pymysql://user:p$word@127.0.0.1:3306/db?charset=utf8mb4")
 
     def test_missing_config_file_returns_legacy_fallback(self):
         from config_loader import load_db_config
@@ -110,6 +137,31 @@ source:
         self.assertEqual(resolve_effective_limit(args.limit, load_settings(), db_config, configured_db_enabled=True), 7)
 
 
+    def test_llm_config_overrides_settings_and_expands_environment(self):
+        from config import apply_llm_config, load_settings
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "llm_config.yml"
+            path.write_text(
+                """
+provider: custom
+api_key: "${LLM_API_KEY}"
+base_url: https://example.com/v1
+model: custom-model
+""",
+                encoding="utf-8",
+            )
+            self.addCleanup(lambda: __import__("os").environ.pop("LLM_API_KEY", None))
+            __import__("os").environ["LLM_API_KEY"] = "sk-test-1234567890"
+
+            settings = apply_llm_config(load_settings(), path)
+
+        self.assertEqual(settings.llm_provider, "custom")
+        self.assertEqual(settings.llm_api_key, "sk-test-1234567890")
+        self.assertEqual(settings.llm_base_url, "https://example.com/v1")
+        self.assertEqual(settings.llm_model, "custom-model")
+
+
 class KeywordUtilsTests(unittest.TestCase):
     def test_expands_single_and_multiple_keywords(self):
         from keyword_utils import expand_keyword_groups
@@ -163,6 +215,38 @@ class DbReaderTests(unittest.TestCase):
         self.assertNotIn("LIKE", str(query.statement))
         self.assertEqual(query.params["selected_id_0"], "1")
         self.assertEqual(query.params["selected_id_1"], "2")
+
+    def test_allows_chinese_table_and_column_identifiers(self):
+        from db_reader import quote_identifier, quote_table, validate_column_name, validate_table_name
+
+        self.assertEqual(validate_table_name("temp_商业补充保险_20250523"), "temp_商业补充保险_20250523")
+        self.assertEqual(validate_table_name("db_name.temp_商业补充保险_20250523"), "db_name.temp_商业补充保险_20250523")
+        self.assertEqual(validate_column_name("地区名称"), "地区名称")
+        self.assertEqual(validate_column_name("审核日期"), "审核日期")
+        self.assertEqual(quote_table("db_name.temp_商业补充保险_20250523"), "`db_name`.`temp_商业补充保险_20250523`")
+        self.assertEqual(quote_identifier("保险类型"), "`保险类型`")
+
+    def test_rejects_dangerous_table_and_column_identifiers(self):
+        from db_reader import DbReaderError, validate_column_name, validate_table_name
+
+        dangerous = [
+            "table; DROP TABLE user",
+            "table name",
+            "table--comment",
+            "table/*comment*/",
+            "table`name",
+            "table'name",
+            'table"name',
+            "table(name)",
+            "table+name",
+        ]
+        for value in dangerous:
+            with self.subTest(table=value):
+                with self.assertRaises(DbReaderError):
+                    validate_table_name(value)
+            with self.subTest(column=value):
+                with self.assertRaises(DbReaderError):
+                    validate_column_name(value)
 
     def test_maps_database_row_to_legacy_record_shape(self):
         from config_loader import DbConfig, SourceConfig
@@ -257,6 +341,8 @@ class IntegrationSurfaceTests(unittest.TestCase):
                 "1,2",
                 "--llm-format",
                 "legacy",
+                "--llm-config",
+                "config/llm_config.yml",
                 "--table-config",
                 "config/table_mapping.yml",
                 "--no-llm",
@@ -269,6 +355,7 @@ class IntegrationSurfaceTests(unittest.TestCase):
         self.assertEqual(args.keyword_mode, "and")
         self.assertEqual(args.selected_ids, "1,2")
         self.assertEqual(args.llm_format, "legacy")
+        self.assertEqual(args.llm_config, "config/llm_config.yml")
         self.assertEqual(args.table_config, "config/table_mapping.yml")
         self.assertTrue(args.no_llm)
 

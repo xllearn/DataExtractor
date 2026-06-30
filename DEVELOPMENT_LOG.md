@@ -135,3 +135,36 @@
 
 - 本机继续使用 `py` 运行测试和脚本。
 - 推送仍需用 Python `dulwich`，避免 Git for Windows HTTPS helper 问题。
+
+## 2026-06-30 续 4
+
+### 本轮目标
+
+修复真实数据测试发现的 P0/P1 问题：`病种名称` 被正文规则和融合优先级错误放大为长句或泛化描述。
+
+### 已完成
+
+- 保留 TRAE 本地改动并继续在其基础上修改：`--llm-config`、中文表名/字段名校验、真实测试报告和临时 LLM 配置模板均未回滚。
+- 确认本地 ignored `.env` 使用用户指定的 DeepSeek key；新增根目录 ignored `.env` 供当前根目录代码读取，真实 key 不提交。
+- 修复 `.env` UTF-8 BOM 导致 `DATABASE_URL` 读取为空的问题：`config.py` 与 `config_loader.py` 加载 dotenv 时使用 `utf-8-sig` 并关闭 dotenv 插值。
+- `rule_extractor.py` 新增 `normalize_disease_name`、`is_valid_disease_name`，收紧 `病种名称` 正文规则，只从强上下文或明确核心疾病词抽取。
+- 过滤宣传语、费用说明、人物/地名/时间长句、国家/机构/分类片段，以及 `大病`、`既往症`、`慢性病`、`特殊病` 等泛化词。
+- `record_fusion.py` 对 `病种名称` 增加特殊融合：正文规则长句 vs LLM 核心疾病名时采用 LLM；双方均不可信时清空并人工复核；冲突证据记录 `source_a/value_a/source_b/value_b/chosen_source/chosen_value/reason`。
+- `field_mapping.py` 和 `config/field_mapping.yml` 增加病种名称别名：`疾病名称`、`特定病种`、`保障病种`、`纳入病种`、`病种范围`。
+- `prompts_v2.py` 增强病种名称约束和正反例，要求 LLM 不把宣传语、费用场景或泛化类别写入病种名称。
+- 新增 `tests/test_disease_name_quality.py`，覆盖规则清洗、无效泛化词、融合择优、表格明确病种表头和 prompt 约束。
+- `REAL_DB_20_TEST_REPORT.md` 追加病种名称质量问题修复记录与最终 3 条 smoke / 20 条真实数据验证结果。
+
+### 已验证
+
+- `python -m unittest discover -s tests`：本机命令不可用，按任务说明改用 `py`。
+- `py -m unittest discover -s tests -v`：69 个测试通过。
+- `py -m pytest -q`：69 passed，30 subtests passed。
+- `py -m compileall main.py config.py config_loader.py db.py db_reader.py keyword_utils.py field_mapping.py json_utils.py excel_writer.py prompts.py prompts_v2.py llm_extractor.py table_extractor.py rule_extractor.py record_fusion.py extraction_types.py input_xlsx.py utils.py security_utils.py tests`：通过。
+- 3 条真实 smoke：通过，生成 `outputs/real_db_20/disease_fix_smoke/商业补充保险抽取结果_20260630_150917.xlsx`，`病种名称` 无已知错误长句和泛化词。
+- 20 条真实数据：通过，生成 `outputs/real_db_20/disease_fix_20/商业补充保险抽取结果_20260630_151622.xlsx`，结果数据 27 行，`病种名称` 无已知错误长句、泛化词和本轮观察到的国家/参保/高价自费类坏片段。
+
+### 注意事项
+
+- 真实数据运行使用 `--no-ocr`，因为当前环境仍未安装 PaddleOCR/paddlepaddle。
+- `logs/`、`outputs/`、根目录 `.env` 和旧目录 `.env` 均为 ignored，本轮不提交真实数据库连接串、真实 LLM key 或真实输出 Excel。

@@ -5,7 +5,7 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List
 
-from config import PROJECT_ROOT, build_arg_parser, load_settings
+from config import PROJECT_ROOT, LlmConfigError, apply_llm_config, build_arg_parser, load_settings
 from config_loader import ConfigError, load_db_config, parse_selected_ids, validate_db_config_ready
 from confidence import evaluate_rows, mark_ocr_failed
 from db import fetch_records
@@ -573,6 +573,12 @@ def main() -> int:
 
     logger = setup_logging(logs_dir, args.debug)
     logger.info("程序启动参数: %s", vars(args))
+    try:
+        settings = apply_llm_config(settings, args.llm_config)
+    except LlmConfigError as exc:
+        logger.error("LLM 配置错误: %s", exc)
+        append_jsonl(logs_dir / "failed_records.jsonl", {"phase": "llm_config", "error": str(exc)})
+        return 1
     runtime_flags = resolve_runtime_flags(args.dry_run, args.no_llm, args.no_ocr, args.no_excel)
 
     try:

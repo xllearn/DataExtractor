@@ -2,9 +2,11 @@ from typing import Any, Dict, List, Sequence
 
 from extraction_types import FusionResult
 from field_mapping import FieldMapping, apply_direct_fields, normalize_record_fields
+from rule_extractor import is_valid_disease_name, normalize_disease_name
 
 
 SOURCE_PRIORITY = ["database_direct", "table", "text_rule", "llm"]
+DISEASE_FIELD = "病种名称"
 
 
 def _meaningful(value: Any) -> bool:
@@ -70,6 +72,146 @@ def _mark_chosen(evidence: List[Dict[str, Any]], chosen_rows: List[Dict[str, Any
     return marked
 
 
+def _conflict(
+    record: Dict[str, Any],
+    row_index: int,
+    field: str,
+    source_a: str,
+    value_a: Any,
+    source_b: str,
+    value_b: Any,
+    chosen_source: str,
+    chosen_value: Any,
+    reason: str,
+) -> Dict[str, Any]:
+    return {
+        "source_id": _source_id(record),
+        "info_id": _info_id(record),
+        "row_index": row_index,
+        "field": field,
+        "rule_value": value_a,
+        "llm_value": value_b,
+        "chosen_value": chosen_value,
+        "reason": reason,
+        "rule_source": source_a,
+        "llm_source": source_b,
+        "source_a": source_a,
+        "value_a": value_a,
+        "source_b": source_b,
+        "value_b": value_b,
+        "chosen_source": chosen_source,
+    }
+
+
+def _choose_disease_name(
+    record: Dict[str, Any],
+    candidates: List[tuple[str, Any]],
+    row_index: int,
+) -> tuple[str, str, List[Dict[str, Any]]]:
+    meaningful_candidates = [(source, str(value).strip()) for source, value in candidates if _meaningful(value)]
+    if not meaningful_candidates:
+        return "", "", []
+
+    for source, value in meaningful_candidates:
+        if source in {"database_direct", "table"}:
+            return value, source, []
+
+    text_value = next((value for source, value in meaningful_candidates if source == "text_rule"), "")
+    llm_value = next((value for source, value in meaningful_candidates if source == "llm"), "")
+    text_normalized = normalize_disease_name(text_value)
+    llm_normalized = normalize_disease_name(llm_value)
+
+    conflicts: List[Dict[str, Any]] = []
+    if text_value and llm_value:
+        if llm_normalized and is_valid_disease_name(llm_value) and (llm_value in text_value or text_normalized == llm_value):
+            conflicts.append(
+                _conflict(
+                    record,
+                    row_index,
+                    DISEASE_FIELD,
+                    "text_rule",
+                    text_value,
+                    "llm",
+                    llm_value,
+                    "llm",
+                    llm_value,
+                    "病种名称特殊规则：LLM值为规则长句中的核心疾病名，优先采用LLM",
+                )
+            )
+            return llm_value, "llm", conflicts
+        if not text_normalized and llm_normalized and is_valid_disease_name(llm_value):
+            conflicts.append(
+                _conflict(
+                    record,
+                    row_index,
+                    DISEASE_FIELD,
+                    "text_rule",
+                    text_value,
+                    "llm",
+                    llm_value,
+                    "llm",
+                    llm_value,
+                    "病种名称特殊规则：正文规则值不可信，优先采用有效LLM值",
+                )
+            )
+            return llm_value, "llm", conflicts
+        if not text_normalized and not llm_normalized:
+            conflicts.append(
+                _conflict(
+                    record,
+                    row_index,
+                    DISEASE_FIELD,
+                    "text_rule",
+                    text_value,
+                    "llm",
+                    llm_value,
+                    "cleared",
+                    "",
+                    "病种名称规则和LLM均不可信",
+                )
+            )
+            return "", "cleared", conflicts
+
+    if text_normalized:
+        if text_value != text_normalized:
+            conflicts.append(
+                _conflict(
+                    record,
+                    row_index,
+                    DISEASE_FIELD,
+                    "text_rule",
+                    text_value,
+                    "normalizer",
+                    text_normalized,
+                    "text_rule",
+                    text_normalized,
+                    "病种名称特殊规则：正文规则长句清洗为核心疾病名",
+                )
+            )
+        return text_normalized, "text_rule", conflicts
+
+    if llm_normalized and is_valid_disease_name(llm_value):
+        return llm_value, "llm", conflicts
+
+    source_a, value_a = meaningful_candidates[0]
+    source_b, value_b = meaningful_candidates[1] if len(meaningful_candidates) > 1 else ("", "")
+    conflicts.append(
+        _conflict(
+            record,
+            row_index,
+            DISEASE_FIELD,
+            source_a,
+            value_a,
+            source_b,
+            value_b,
+            "cleared",
+            "",
+            "病种名称规则和LLM均不可信",
+        )
+    )
+    return "", "cleared", conflicts
+
+
 def _merge_row(
     record: Dict[str, Any],
     source_rows: List[tuple[str, Dict[str, Any]]],
@@ -86,29 +228,36 @@ def _merge_row(
             value = normalized.get(field)
             if not _meaningful(value):
                 continue
+            if field == DISEASE_FIELD:
+                continue
             if field not in chosen:
                 chosen[field] = value
                 chosen_source[field] = source
             elif str(chosen[field]) != str(value):
                 conflicts.append(
-                    {
-                        "source_id": _source_id(record),
-                        "info_id": _info_id(record),
-                        "row_index": row_index,
-                        "field": field,
-                        "rule_value": chosen[field],
-                        "llm_value": value,
-                        "chosen_value": chosen[field],
-                        "reason": f"{chosen_source[field]} 优先于 {source}，保留高优先级值",
-                        "rule_source": chosen_source[field],
-                        "llm_source": source,
-                        "source_a": chosen_source[field],
-                        "value_a": chosen[field],
-                        "source_b": source,
-                        "value_b": value,
-                        "chosen_source": chosen_source[field],
-                    }
+                    _conflict(
+                        record,
+                        row_index,
+                        field,
+                        chosen_source[field],
+                        chosen[field],
+                        source,
+                        value,
+                        chosen_source[field],
+                        chosen[field],
+                        f"{chosen_source[field]} 优先于 {source}，保留高优先级值",
+                    )
                 )
+
+    disease_candidates = [
+        (source, normalize_record_fields(row or {}, field_mapping).get(DISEASE_FIELD))
+        for source, row in source_rows
+    ]
+    disease_value, disease_source, disease_conflicts = _choose_disease_name(record, disease_candidates, row_index)
+    if _meaningful(disease_value):
+        chosen[DISEASE_FIELD] = disease_value
+        chosen_source[DISEASE_FIELD] = disease_source
+    conflicts.extend(disease_conflicts)
 
     normalized_chosen = normalize_record_fields(chosen, field_mapping)
     return apply_direct_fields(normalized_chosen, record, field_mapping), conflicts
@@ -160,6 +309,9 @@ def fuse_record_sources(
             for item in conflicts
         )
         review_reasons.append(f"不同来源字段存在冲突：{details}")
+        for reason in [str(item.get("reason", "")) for item in conflicts if item.get("field") == DISEASE_FIELD]:
+            if reason and reason not in review_reasons:
+                review_reasons.append(reason)
     if (table_records or text_rule_records) and llm_records and len(base) != len(llm_records):
         review_reasons.append("规则记录和 LLM 记录数量不一致，需要人工复核")
 
