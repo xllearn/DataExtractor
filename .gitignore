@@ -11,3 +11,5 @@ __pycache__/
 outputs/
 logs/
 temp_images/
+
+samples/**/*.xlsx
