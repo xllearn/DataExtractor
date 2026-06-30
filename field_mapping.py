@@ -111,5 +111,13 @@ def normalize_record_fields(row: Dict[str, Any], field_mapping: FieldMapping) ->
     return normalized
 
 
+def apply_direct_fields(row: Dict[str, Any], record: Dict[str, Any], field_mapping: FieldMapping) -> Dict[str, Any]:
+    merged = dict(row or {})
+    for header, value in (record.get("_direct_fields") or {}).items():
+        if header in field_mapping.headers and value not in (None, ""):
+            merged[header] = value
+    return normalize_record_fields(merged, field_mapping)
+
+
 def normalize_records_fields(rows: List[Dict[str, Any]], field_mapping: FieldMapping) -> List[Dict[str, Any]]:
     return [normalize_record_fields(row, field_mapping) for row in rows]

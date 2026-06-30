@@ -15,9 +15,34 @@ from image_ocr import process_image_ocr
 from input_xlsx import read_records_from_xlsx
 from json_utils import normalize_llm_rows
 from keyword_utils import expand_keyword_groups
+from llm_extractor import extract_with_llm
 from llm_client import LLMClient
 from prompts import build_extract_prompt
+from prompts_v2 import build_extract_prompt_v2
+from rule_extractor import extract_key_value_records
+from table_extractor import extract_table_records
 from utils import append_jsonl, ensure_dir, today_yyyymmdd
+
+
+def resolve_effective_limit(args_limit: int | None, settings, db_config=None, configured_db_enabled: bool = False) -> int:
+    if args_limit is not None:
+        return int(args_limit)
+    if configured_db_enabled and db_config is not None:
+        return int(db_config.query.default_limit)
+    return int(settings.default_limit)
+
+
+def validate_keyword_supported(keyword: str, configured_db_enabled: bool) -> None:
+    if keyword and not configured_db_enabled:
+        raise ValueError("--keyword 需要启用 config/db_config.yml 配置化数据库读取；旧 db.py 模式暂不支持关键词检索")
+
+
+def log_rule_result(result, logs_dir: Path, record_index: int, rule_phase: str, logger: logging.Logger) -> None:
+    for evidence in result.field_evidence:
+        append_jsonl(logs_dir / "field_evidence.jsonl", {"record_index": record_index, "rule_phase": rule_phase, **evidence})
+    for error in result.errors:
+        append_jsonl(logs_dir / "rule_extract_errors.jsonl", {"record_index": record_index, "rule_phase": rule_phase, **error})
+    logger.info("%s 抽取记录数: %s, evidence=%s, errors=%s", rule_phase, len(result.records), len(result.field_evidence), len(result.errors))
 
 
 def resolve_input_path(value: str) -> Path:
@@ -62,12 +87,20 @@ def extract_record_rows(
     debug: bool,
     logger: logging.Logger | None,
     field_mapping: FieldMapping | None = None,
+    llm_format: str = "v2",
     ocr_func=process_image_ocr,
 ) -> List[Dict[str, Any]]:
     logger = logger or logging.getLogger("db_to_excel_extractor")
     parsed = parse_html_content(record.get("Content"), image_base_url, logger)
     logger.info("图片数量: %s", len(parsed.image_urls))
     logger.info("首轮抽取不启用OCR")
+    source_id = str(record.get("_source_id") or record.get("SourceURL") or record_index)
+    info_id = str(record.get("info_id") or (record.get("_direct_fields") or {}).get("info_id") or "")
+    table_result = extract_table_records(record.get("Content") or "", parsed.tables_text, source_id=source_id, info_id=info_id)
+    text_rule_result = extract_key_value_records(parsed.clean_text, source_id=source_id, info_id=info_id)
+    log_rule_result(table_result, logs_dir, record_index, "table_rule", logger)
+    log_rule_result(text_rule_result, logs_dir, record_index, "text_rule", logger)
+    field_evidence = [*table_result.field_evidence, *text_rule_result.field_evidence]
 
     initial_rows = extract_once(
         record=record,
@@ -83,6 +116,10 @@ def extract_record_rows(
         debug=debug,
         logger=logger,
         field_mapping=field_mapping,
+        llm_format=llm_format,
+        table_rule_records=table_result.records,
+        text_rule_records=text_rule_result.records,
+        field_evidence=field_evidence,
     )
     initial_evals = evaluate_rows(
         initial_rows,
@@ -132,6 +169,10 @@ def extract_record_rows(
         debug=debug,
         logger=logger,
         field_mapping=field_mapping,
+        llm_format=llm_format,
+        table_rule_records=table_result.records,
+        text_rule_records=text_rule_result.records,
+        field_evidence=field_evidence,
     )
     retry_evals = evaluate_rows(
         retry_rows,
@@ -160,10 +201,40 @@ def extract_once(
     debug: bool,
     logger: logging.Logger,
     field_mapping: FieldMapping | None = None,
+    llm_format: str = "v2",
+    table_rule_records: List[Dict[str, Any]] | None = None,
+    text_rule_records: List[Dict[str, Any]] | None = None,
+    field_evidence: List[Dict[str, Any]] | None = None,
 ) -> List[Dict[str, Any]]:
-    prompt = build_extract_prompt(record, clean_text, tables_text, image_ocr_text, today, field_mapping=field_mapping)
+    field_mapping = field_mapping or load_field_mapping(None)
+    if llm_format == "legacy":
+        prompt = build_extract_prompt(record, clean_text, tables_text, image_ocr_text, today, field_mapping=field_mapping)
+    else:
+        prompt = build_extract_prompt_v2(
+            record,
+            clean_text,
+            tables_text,
+            image_ocr_text,
+            today,
+            field_mapping=field_mapping,
+            table_rule_records=table_rule_records,
+            text_rule_records=text_rule_records,
+            field_evidence=field_evidence,
+        )
     try:
-        raw_output = llm_client.extract(prompt)
+        if llm_format == "legacy":
+            raw_output = llm_client.extract(prompt)
+            rows = normalize_llm_rows(raw_output, record, today, logs_dir, field_mapping=field_mapping)
+            logger.info("llm_format=legacy parse_success=true need_manual_review=false review_reason=")
+        else:
+            llm_result = extract_with_llm(llm_client, prompt, record, today, logs_dir, field_mapping)
+            rows = llm_result.records
+            logger.info(
+                "llm_format=v2 parse_success=%s need_manual_review=%s review_reason=%s",
+                not bool(llm_result.parse_error),
+                llm_result.need_manual_review,
+                llm_result.review_reason,
+            )
         logger.info("大模型调用是否成功: true, attempt=%s", attempt)
     except Exception as llm_exc:
         raw_output = "[]"
@@ -180,7 +251,8 @@ def extract_once(
             },
         )
 
-    rows = normalize_llm_rows(raw_output, record, today, logs_dir, field_mapping=field_mapping)
+        rows = normalize_llm_rows(raw_output, record, today, logs_dir, field_mapping=field_mapping)
+        logger.info("llm_format=%s parse_success=false need_manual_review=true review_reason=%s", llm_format, llm_exc)
     logger.info("模型返回行数: %s, attempt=%s", len(rows), attempt)
     if debug:
         logger.debug("抽取上下文: attempt=%s image_count=%s ocr_text_length=%s", attempt, image_count, len(image_ocr_text or ""))
@@ -248,7 +320,8 @@ def main() -> int:
             logger.info("当前输入模式: input-xlsx, path=%s", input_path)
             if args.keyword:
                 logger.info("input-xlsx 模式忽略数据库关键词检索: keyword=%s", args.keyword)
-            records = read_records_from_xlsx(input_path, limit=args.limit, offset=args.offset)
+            effective_limit = resolve_effective_limit(args.limit, settings, configured_db_enabled=False)
+            records = read_records_from_xlsx(input_path, limit=effective_limit, offset=args.offset)
         else:
             selected_ids = parse_selected_ids(args.selected_ids)
             db_config = load_db_config(args.config)
@@ -263,7 +336,9 @@ def main() -> int:
 
             if db_config.use_configured_reader:
                 validate_db_config_ready(db_config)
+                effective_limit = resolve_effective_limit(args.limit, settings, db_config, configured_db_enabled=True)
                 logger.info("当前输入模式: configured-db, table=%s", db_config.source.table)
+                logger.info("有效 limit: %s", effective_limit)
                 logger.info(
                     "关键词检索: enabled=%s raw=%s mode=%s groups=%s",
                     bool(keyword_groups and not selected_ids),
@@ -273,7 +348,7 @@ def main() -> int:
                 )
                 records = fetch_configured_records(
                     db_config,
-                    limit=args.limit,
+                    limit=effective_limit,
                     offset=args.offset,
                     selected_ids=selected_ids,
                     keyword_groups=[] if selected_ids else keyword_groups,
@@ -284,10 +359,10 @@ def main() -> int:
                 validate_db_config_ready(db_config)
                 records = []
             else:
-                if args.keyword:
-                    logger.info("未启用配置化数据库读取，旧 db.py 流程暂不处理 --keyword")
+                validate_keyword_supported(args.keyword, configured_db_enabled=False)
+                effective_limit = resolve_effective_limit(args.limit, settings, configured_db_enabled=False)
                 logger.info("当前输入模式: MySQL, table=%s", settings.db_table)
-                records = fetch_records(settings, limit=args.limit, offset=args.offset, where=args.where)
+                records = fetch_records(settings, limit=effective_limit, offset=args.offset, where=args.where)
         logger.info("读取到记录数: %s", len(records))
     except (ConfigError, DbReaderError, Exception) as exc:
         logger.exception("读取输入失败: %s", exc)
@@ -317,6 +392,7 @@ def main() -> int:
                 debug=args.debug,
                 logger=logger,
                 field_mapping=field_mapping,
+                llm_format=args.llm_format,
             )
 
             if args.mode == "single":

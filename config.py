@@ -68,7 +68,7 @@ def load_settings(env_path: Optional[Path] = None) -> Settings:
 def build_arg_parser(settings: Settings) -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="从 MySQL 或调试 Excel 抽取政策文章结构化数据")
     parser.add_argument("--mode", choices=["single", "merge"], default=settings.default_mode)
-    parser.add_argument("--limit", type=int, default=settings.default_limit)
+    parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--offset", type=int, default=settings.default_offset)
     parser.add_argument("--where", default="")
     parser.add_argument("--config", default="config/db_config.yml")
@@ -76,6 +76,7 @@ def build_arg_parser(settings: Settings) -> argparse.ArgumentParser:
     parser.add_argument("--keyword", default="")
     parser.add_argument("--keyword-mode", choices=["or", "and"], default="")
     parser.add_argument("--selected-ids", default="")
+    parser.add_argument("--llm-format", choices=["v2", "legacy"], default="v2")
     parser.add_argument("--input-xlsx", default="")
     parser.add_argument("--output-dir", default=str(settings.output_dir))
     parser.add_argument("--no-ocr", action="store_true")

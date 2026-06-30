@@ -86,6 +86,29 @@ source:
 
         self.assertEqual(parse_selected_ids(" 1, 2,, abc "), ["1", "2", "abc"])
 
+    def test_config_default_limit_wins_when_cli_limit_missing_for_configured_db(self):
+        from config import build_arg_parser, load_settings
+        from config_loader import DbConfig, QueryConfig
+        from main import resolve_effective_limit
+
+        parser = build_arg_parser(load_settings())
+        args = parser.parse_args([])
+        db_config = DbConfig(exists=True, database_url="sqlite:///:memory:", query=QueryConfig(default_limit=25))
+
+        self.assertIsNone(args.limit)
+        self.assertEqual(resolve_effective_limit(args.limit, load_settings(), db_config, configured_db_enabled=True), 25)
+
+    def test_cli_limit_wins_over_config_default_limit(self):
+        from config import build_arg_parser, load_settings
+        from config_loader import DbConfig, QueryConfig
+        from main import resolve_effective_limit
+
+        parser = build_arg_parser(load_settings())
+        args = parser.parse_args(["--limit", "7"])
+        db_config = DbConfig(exists=True, database_url="sqlite:///:memory:", query=QueryConfig(default_limit=25))
+
+        self.assertEqual(resolve_effective_limit(args.limit, load_settings(), db_config, configured_db_enabled=True), 7)
+
 
 class KeywordUtilsTests(unittest.TestCase):
     def test_expands_single_and_multiple_keywords(self):
@@ -232,6 +255,8 @@ class IntegrationSurfaceTests(unittest.TestCase):
                 "and",
                 "--selected-ids",
                 "1,2",
+                "--llm-format",
+                "legacy",
             ]
         )
 
@@ -240,6 +265,7 @@ class IntegrationSurfaceTests(unittest.TestCase):
         self.assertEqual(args.keyword, "医保 报销")
         self.assertEqual(args.keyword_mode, "and")
         self.assertEqual(args.selected_ids, "1,2")
+        self.assertEqual(args.llm_format, "legacy")
 
     def test_json_normalization_uses_field_mapping_aliases(self):
         from json_utils import normalize_llm_rows
@@ -256,6 +282,40 @@ class IntegrationSurfaceTests(unittest.TestCase):
         self.assertEqual(rows[0]["起付标准"], "500元")
         self.assertEqual(rows[0]["补助限额"], "15万元")
         self.assertNotIn("多余", rows[0])
+
+    def test_invalid_json_fallback_still_applies_direct_fields(self):
+        from json_utils import normalize_llm_rows
+
+        record = {
+            "AuditTime": "2026-01-02",
+            "_direct_fields": {"info_id": "A-001", "地区名称": "山东省", "保险类型": "居民医保"},
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            rows = normalize_llm_rows("not json", record, "20260630", Path(tmp))
+
+        self.assertEqual(rows[0]["info_id"], "A-001")
+        self.assertEqual(rows[0]["地区名称"], "山东省")
+        self.assertEqual(rows[0]["保险类型"], "居民医保")
+
+    def test_empty_json_array_fallback_still_applies_direct_fields(self):
+        from json_utils import normalize_llm_rows
+
+        record = {
+            "AuditTime": "2026-01-02",
+            "_direct_fields": {"info_id": "A-002", "地区名称": "济南市", "保险类型": "职工医保"},
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            rows = normalize_llm_rows("[]", record, "20260630", Path(tmp))
+
+        self.assertEqual(rows[0]["info_id"], "A-002")
+        self.assertEqual(rows[0]["地区名称"], "济南市")
+        self.assertEqual(rows[0]["保险类型"], "职工医保")
+
+    def test_legacy_db_keyword_is_rejected_instead_of_ignored(self):
+        from main import validate_keyword_supported
+
+        with self.assertRaisesRegex(ValueError, "--keyword 需要启用"):
+            validate_keyword_supported(keyword="医保", configured_db_enabled=False)
 
 
 if __name__ == "__main__":

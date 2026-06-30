@@ -74,7 +74,15 @@ python main.py --keyword "医保 报销" --keyword-mode and --limit 20
 
 优先级：`--input-xlsx` 最高，不连接数据库；`--selected-ids` 高于 `--keyword`，两者同时存在时只按指定 ID 读取，并在日志中记录覆盖关系。
 
+读取条数优先级：
+
+```text
+命令行 --limit > config/db_config.yml query.default_limit > .env DEFAULT_LIMIT > 内置默认值
+```
+
 关键词会按内置同义词扩展后检索，例如 `医保` 会扩展为 `医保 / 医疗保险 / 基本医保 / 医保基金`，`报销` 会扩展为 `报销 / 报付 / 支付 / 补偿 / 待遇`。检索 SQL 使用参数化参数，字段名和表名会做基础合法性校验。
+
+如果没有启用配置化数据库读取，`--keyword` 会直接报错；旧 `db.py` 流程不会静默忽略关键词。
 
 ## 模板和样本
 
@@ -148,6 +156,13 @@ python main.py --input-xlsx "samples/db/新建 XLSX 工作表.xlsx" --limit 1 --
 python main.py --field-config config/field_mapping.yml --limit 5 --mode merge
 ```
 
+LLM 输出格式默认使用 v2 JSON object，可用 `--llm-format legacy` 回退旧 JSON 数组 prompt：
+
+```bash
+python main.py --llm-format v2 --limit 5 --mode merge
+python main.py --llm-format legacy --limit 5 --mode merge
+```
+
 ## 输出模式
 
 `single` 是默认模式。每条输入记录生成一个独立 xlsx，文件名类似：
@@ -175,7 +190,7 @@ python main.py --field-config config/field_mapping.yml --limit 5 --mode merge
 - 只保留固定 26 列，多余字段不会写入
 - 缺失字段使用 `defaults` 中的默认值，没有默认值则填空字符串
 - LLM 返回字段别名会映射到标准字段，例如 `支付比例` -> `报销比例`，`起付线` -> `起付标准`，`最高支付限额` -> `补助限额`
-- 数据库配置中的 `direct_field_columns` 会写入 `_direct_fields`，在 LLM 解析后覆盖到最终 26 列
+- 数据库配置中的 `direct_field_columns` 会写入 `_direct_fields`，在 LLM 正常返回、空数组、JSON 解析失败 fallback 和规则抽取结果中都会优先覆盖到最终 26 列
 
 默认字段会在模型返回后再次覆盖或补齐，其中：
 
@@ -186,6 +201,54 @@ python main.py --field-config config/field_mapping.yml --limit 5 --mode merge
 - `审核状态0待审核1已审核` 固定 `0`
 - `执行状态` 默认 `执行中`
 - `是否需要手动修改执行状态(1是0否)` 固定 `0`
+
+## 规则抽取
+
+程序会在 LLM 前先执行轻量规则抽取，结果暂时只写日志和传给 LLM v2 作为参考，不直接融合覆盖最终输出。
+
+表格规则配置在：
+
+```text
+config/table_mapping.yml
+```
+
+它支持 HTML `<table>`、Markdown 风格表格和简单分隔符类表格文本。表头别名会映射到固定 26 列，例如 `支付比例` -> `报销比例`，`起付线` -> `起付标准`，`最高支付限额` -> `补助限额`。无法映射的表格列会合并到 `备注`。
+
+正文键值规则会识别常见表达，例如：
+
+```text
+报销比例：80%
+起付标准为500元
+年度最高支付限额为15万元
+居民医保报销比例为60%
+三级医院支付比例70%
+```
+
+当前支持抽取起付标准、补助限额、报销比例、人员类型、保险类型、医院类型、病种名称、类型和标化类型等字段。规则失败不会中断单条记录处理。
+
+## LLM v2 输出格式
+
+默认 `--llm-format v2` 要求模型返回 JSON object：
+
+```json
+{
+  "records": [
+    {
+      "报销比例": "80%"
+    }
+  ],
+  "evidence": {
+    "报销比例": "原文证据片段"
+  },
+  "confidence": {
+    "报销比例": 0.85
+  },
+  "need_manual_review": false,
+  "review_reason": ""
+}
+```
+
+解析时会强制只保留固定 26 列，补齐缺失字段，删除多余字段，`confidence` 会裁剪到 0-1，`need_manual_review` 会转换为 bool。旧版 JSON array 和单 record object 仍兼容。
 
 ## 日志
 
@@ -205,6 +268,18 @@ logs/failed_records.jsonl
 
 ```text
 logs/extract_eval.jsonl
+```
+
+规则字段证据：
+
+```text
+logs/field_evidence.jsonl
+```
+
+规则抽取错误：
+
+```text
+logs/rule_extract_errors.jsonl
 ```
 
 每条模型输出行都会记录内部评估字段：
