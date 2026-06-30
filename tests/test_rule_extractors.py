@@ -72,6 +72,23 @@ class TableExtractorTests(unittest.TestCase):
         self.assertEqual(len(result.records), 1)
         self.assertEqual(result.records[0]["报销比例"], "80%")
 
+    def test_table_extractor_preserves_rows_that_differ_by_interval(self):
+        from table_extractor import extract_tables_from_html
+
+        html = """
+        <table>
+          <tr><th>人员类型</th><th>区间</th><th>支付比例</th></tr>
+          <tr><td>职工</td><td>0-1000元</td><td>80%</td></tr>
+          <tr><td>职工</td><td>1000元以上</td><td>80%</td></tr>
+        </table>
+        """
+
+        result = extract_tables_from_html(html)
+
+        self.assertEqual(len(result.records), 2)
+        self.assertEqual(result.records[0]["区间"], "0-1000元")
+        self.assertEqual(result.records[1]["区间"], "1000元以上")
+
 
 class TextRuleExtractorTests(unittest.TestCase):
     def test_extracts_common_key_value_patterns(self):

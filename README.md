@@ -378,6 +378,96 @@ logs/failed_llm_outputs/
 
 单条记录失败不会中断整个批次。
 
+## 阶段 13-15：质量评估、图片导入和 Web 页面
+
+### Excel 相似度对比
+
+使用 `excel_compare.py` 对比系统生成 Excel 和人工 Excel：
+
+```powershell
+py excel_compare.py --generated outputs/result.xlsx --manual samples/manual/人工.xlsx --output reports/compare_report.xlsx
+```
+
+对比会读取 `结果数据` sheet，按固定 26 列输出：
+
+- `overall_similarity`：整体相似度，范围 `0..1`
+- `core_field_similarity`：核心字段相似度，核心字段包括 `病种名称`、`报销比例`、`起付标准`、`补助限额`、`人员类型`、`保险类型`
+- 字段级准确率/相似度、行级匹配和差异明细
+
+比较逻辑支持空值匹配、百分号归一、金额归一和文本模糊匹配，例如 `80%` 与 `80％`、`15万元` 与 `150000元` 可视为一致。
+
+### AI 生成数据回归
+
+模拟数据位于 `samples/ai_generated/`：
+
+```powershell
+py -m unittest tests.test_ai_generated_cases -v
+```
+
+测试不调用真实 LLM，而是使用 fake LLM 返回可控 JSON，覆盖表格、正文、图片占位、强/弱上下文、无病种、泛化病种、多病种和多待遇类型。验收阈值为：
+
+```text
+overall_similarity >= 0.85
+core_field_similarity >= 0.90
+```
+
+### 图片数据导入与人工 Excel 对比
+
+如果本机 OCR 可用，可直接从图片 OCR；如果没有 OCR，可提供人工转录 JSON/CSV/XLSX 作为 fallback。当前脚本支持把人工 Excel 转成一条数据库文章记录，写入测试表，再从数据库重新读取并生成 Excel：
+
+```powershell
+py scripts\run_image_import_test.py --result-dir "$env:USERPROFILE\Desktop\DataExtractor_test_results" --target-table image_import_articles
+```
+
+导入脚本使用 SQLAlchemy 参数化 SQL 和事务，默认创建/写入测试表 `image_import_articles`，并写入 `source=image_import`、`batch_id=image_import_YYYYMMDD_HHMMSS`。不要直接写生产主表；如果必须写真实表，需要保留 batch 标记便于清理。
+
+图片解析中间结果、生成 Excel、对比报告默认写到传入的结果目录。真实图片原件、人工 Excel、`logs/`、`outputs/` 和 `.env` 不应提交。
+
+### 真实数据库分层测试
+
+真实数据脚本会从 `.env` / `config/llm_config.yml` 读取数据库和 LLM 配置，不会把密钥写入报告：
+
+```powershell
+py scripts\run_real_db_smoke.py --result-dir "$env:USERPROFILE\Desktop\DataExtractor_test_results"
+py scripts\run_real_db_20.py --result-dir "$env:USERPROFILE\Desktop\DataExtractor_test_results"
+```
+
+脚本会检查退出码、6 个 sheet、固定 26 列、已知 `病种名称` 错误长句和 LLM 429。遇到 429 不算通过。
+
+### Web API 和前端页面
+
+启动后端：
+
+```powershell
+py api_server.py --host 127.0.0.1 --port 8000
+```
+
+打开：
+
+```text
+http://127.0.0.1:8000/
+```
+
+页面支持数据库状态查看、关键词查询、勾选记录、`no_ocr` / `no_llm` 选项、生成 Excel 和下载 Excel。接口包括：
+
+- `GET /api/health`
+- `GET /api/config/status`
+- `GET /api/articles?keyword=医保&limit=50&offset=0`
+- `POST /api/extract`
+- `GET /api/download/<file_id>`
+
+下载接口只允许下载 `outputs/web/` 下由系统生成的 xlsx 文件，并防止路径穿越。当前页面没有登录权限系统，仅建议在本机或内网受控环境使用。
+
+### 综合验收
+
+综合验收结果建议写到桌面新目录：
+
+```powershell
+py scripts\run_acceptance_all.py --result-dir "$env:USERPROFILE\Desktop\DataExtractor_test_results_YYYYMMDD_HHMMSS"
+```
+
+脚本会运行 unittest、pytest、项目源码 compileall、AI 生成数据测试、前端 API 测试、真实数据库 3 条 smoke、真实数据库 20 条、图片导入和人工 Excel 对比。详细日志和生成文件写在桌面结果目录；仓库内只提交脱敏汇总文档。
+
 ## 常见问题
 
 ### 图片相对路径无法下载怎么办？

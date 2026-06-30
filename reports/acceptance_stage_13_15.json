@@ -1,0 +1,36 @@
+{
+  "result_dir": "C:\\Users\\admin\\Desktop\\DataExtractor_test_results_20260630_165827",
+  "overall_passed": true,
+  "p0_p1": "none",
+  "commands": {
+    "unittest": {"passed": true, "tests": 78},
+    "pytest": {"passed": true, "tests": 78, "subtests": 30},
+    "compileall_project": {"passed": true},
+    "ai_generated": {"passed": true},
+    "api_server": {"passed": true}
+  },
+  "real_db_smoke": {
+    "passed": true,
+    "result_rows": 3,
+    "sheet_count": 6,
+    "fixed_26_headers": true,
+    "known_bad_disease_hits": []
+  },
+  "real_db_20": {
+    "passed": true,
+    "result_rows": 50,
+    "sheet_count": 6,
+    "fixed_26_headers": true,
+    "non_empty_disease_count": 22,
+    "known_bad_disease_hits": []
+  },
+  "image_import": {
+    "passed": true,
+    "result_rows": 104,
+    "overall_similarity": 0.9615384615384616,
+    "core_field_similarity": 1.0
+  },
+  "frontend_api": {
+    "passed": true
+  }
+}

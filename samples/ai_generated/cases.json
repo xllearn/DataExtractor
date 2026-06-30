@@ -1,0 +1,92 @@
+[
+  {
+    "Title": "AI-001 表格病种待遇",
+    "SourceURL": "ai-generated://AI-001",
+    "AuditTime": "2026-01-01",
+    "areaname": "测试省-测试市",
+    "insurancetypename": "城镇职工",
+    "info_id": "AI-001",
+    "Content": "<table><tr><th>病种名称</th><th>类型</th><th>报销比例</th><th>起付标准</th><th>补助限额</th></tr><tr><td>类风湿性关节炎</td><td>门诊慢特病</td><td>80%</td><td>200元</td><td>15万元</td></tr></table>"
+  },
+  {
+    "Title": "AI-002 正文强上下文",
+    "SourceURL": "ai-generated://AI-002",
+    "AuditTime": "2026-01-02",
+    "areaname": "测试省-测试市",
+    "insurancetypename": "城镇职工",
+    "info_id": "AI-002",
+    "Content": "<p>保障病种范围：类风湿性关节炎。门诊慢特病报销比例80%，起付标准200元，补助限额15万元。</p>"
+  },
+  {
+    "Title": "AI-003 无病种住院",
+    "SourceURL": "ai-generated://AI-003",
+    "AuditTime": "2026-01-03",
+    "areaname": "测试省-测试市",
+    "insurancetypename": "城镇职工",
+    "info_id": "AI-003",
+    "Content": "<p>住院待遇报销比例80%，起付标准200元，年度限额15万元。</p>"
+  },
+  {
+    "Title": "AI-004 泛化病种不应抽取",
+    "SourceURL": "ai-generated://AI-004",
+    "AuditTime": "2026-01-04",
+    "areaname": "测试省-测试市",
+    "insurancetypename": "城镇职工",
+    "info_id": "AI-004",
+    "Content": "<p>保障大病和慢性病相关费用，住院待遇报销比例80%。</p>"
+  },
+  {
+    "Title": "AI-005 多病种",
+    "SourceURL": "ai-generated://AI-005",
+    "AuditTime": "2026-01-05",
+    "areaname": "测试省-测试市",
+    "insurancetypename": "城镇职工",
+    "info_id": "AI-005",
+    "Content": "<p>病种范围：高血压、糖尿病、帕金森病。住院待遇报销比例80%。</p>"
+  },
+  {
+    "Title": "AI-006 图片占位",
+    "SourceURL": "ai-generated://AI-006",
+    "AuditTime": "2026-01-06",
+    "areaname": "测试省-测试市",
+    "insurancetypename": "城镇职工",
+    "info_id": "AI-006",
+    "Content": "<p>图片说明待遇表见下图，住院待遇报销比例70%。</p><img src=\"https://example.com/a.png\" />"
+  },
+  {
+    "Title": "AI-007 人员类型",
+    "SourceURL": "ai-generated://AI-007",
+    "AuditTime": "2026-01-07",
+    "areaname": "测试省-测试市",
+    "insurancetypename": "城镇职工",
+    "info_id": "AI-007",
+    "Content": "<p>参保职工住院待遇报销比例80%，起付标准200元。</p>"
+  },
+  {
+    "Title": "AI-008 医院类型",
+    "SourceURL": "ai-generated://AI-008",
+    "AuditTime": "2026-01-08",
+    "areaname": "测试省-测试市",
+    "insurancetypename": "城镇职工",
+    "info_id": "AI-008",
+    "Content": "<p>三级医院住院待遇报销比例80%，起付标准200元。</p>"
+  },
+  {
+    "Title": "AI-009 金额归一",
+    "SourceURL": "ai-generated://AI-009",
+    "AuditTime": "2026-01-09",
+    "areaname": "测试省-测试市",
+    "insurancetypename": "城镇职工",
+    "info_id": "AI-009",
+    "Content": "<p>住院待遇报销比例80%，补助限额150000元。</p>"
+  },
+  {
+    "Title": "AI-010 弱上下文",
+    "SourceURL": "ai-generated://AI-010",
+    "AuditTime": "2026-01-10",
+    "areaname": "测试省-测试市",
+    "insurancetypename": "城镇职工",
+    "info_id": "AI-010",
+    "Content": "<p>参保居民发生住院待遇费用时，报销比例80%，起付标准200元。</p>"
+  }
+]

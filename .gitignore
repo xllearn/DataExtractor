@@ -13,3 +13,8 @@ logs/
 temp_images/
 
 samples/**/*.xlsx
+samples/**/*.jpg
+samples/**/*.jpeg
+samples/**/*.png
+samples/**/*.gif
+samples/**/*.webp

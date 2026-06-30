@@ -40,3 +40,20 @@
 - [x] Unit tests cover conflict evidence generic fields.
 - [x] Unit tests cover template sheet preservation and Excel formula sanitization.
 - [x] Unit tests cover secret masking, strict config and table config validation.
+
+## Phase 13-15 Quality Evaluation And Web UI
+
+- [x] `excel_compare.py` compares generated Excel and manual Excel by fixed 26 columns.
+- [x] `quality_metrics.py` reports overall similarity, core-field similarity, field metrics, row matches and differences.
+- [x] Percent and amount values are normalized during comparison.
+- [x] AI generated cases under `samples/ai_generated/` run without real LLM and meet `overall_similarity >= 0.85`, `core_field_similarity >= 0.90`.
+- [x] Disease-name recall includes common disease suffixes such as `类风湿性关节炎`, while generic terms remain filtered.
+- [x] Image import supports OCR path and manual JSON/CSV/XLSX transcript fallback.
+- [x] Image import writes test records with parameterized SQL, transaction handling, `source=image_import` and `batch_id`.
+- [x] Image-import data is read back from the database before generating Excel.
+- [x] Image-import Excel contains 6 sheets and fixed 26 result columns.
+- [x] Image-import generated Excel vs manual Excel reached `overall_similarity=0.961538`, `core_field_similarity=1.0`.
+- [x] Web API exposes health, config status, article query, extraction and download endpoints.
+- [x] Download endpoint restricts files to generated xlsx files and rejects path traversal.
+- [x] Frontend page supports keyword search, multi-select, no-OCR/no-LLM options, generate and download.
+- [x] Comprehensive acceptance writes detailed generated artifacts to a desktop result folder.

@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>DataExtractor</title>
+    <link rel="stylesheet" href="/web/style.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <header class="toolbar">
+        <div>
+          <h1>DataExtractor</h1>
+          <p id="configStatus">正在读取配置状态...</p>
+        </div>
+        <button id="refreshBtn" type="button">刷新</button>
+      </header>
+
+      <section class="controls">
+        <input id="keywordInput" type="search" placeholder="关键词" />
+        <button id="searchBtn" type="button">搜索</button>
+        <label><input id="noOcrInput" type="checkbox" checked /> 跳过 OCR</label>
+        <label><input id="noLlmInput" type="checkbox" /> 跳过 LLM</label>
+        <button id="extractBtn" type="button">生成 Excel</button>
+      </section>
+
+      <section class="status">
+        <span id="selectionStatus">已选择 0 条</span>
+        <span id="jobStatus"></span>
+        <a id="downloadLink" href="#" hidden>下载 Excel</a>
+      </section>
+
+      <table>
+        <thead>
+          <tr>
+            <th><input id="selectPageInput" type="checkbox" /></th>
+            <th>标题</th>
+            <th>地区</th>
+            <th>保险类型</th>
+            <th>审核时间</th>
+            <th>来源</th>
+          </tr>
+        </thead>
+        <tbody id="articleBody"></tbody>
+      </table>
+    </main>
+    <script src="/web/app.js"></script>
+  </body>
+</html>

@@ -1,0 +1,81 @@
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: #f6f7f9;
+  color: #1f2933;
+  font-family: Arial, "Microsoft YaHei", sans-serif;
+}
+
+.shell {
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 24px;
+}
+
+.toolbar,
+.controls,
+.status {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.toolbar {
+  justify-content: space-between;
+}
+
+h1 {
+  margin: 0 0 6px;
+  font-size: 24px;
+}
+
+p {
+  margin: 0;
+  color: #52606d;
+}
+
+input[type="search"] {
+  min-width: 280px;
+  padding: 8px 10px;
+  border: 1px solid #cbd2d9;
+  border-radius: 6px;
+}
+
+button,
+a#downloadLink {
+  padding: 8px 12px;
+  border: 1px solid #1f6feb;
+  border-radius: 6px;
+  background: #1f6feb;
+  color: #fff;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  background: #fff;
+  border: 1px solid #d9e2ec;
+}
+
+th,
+td {
+  padding: 10px;
+  border-bottom: 1px solid #edf2f7;
+  text-align: left;
+  vertical-align: top;
+}
+
+th {
+  background: #edf2f7;
+  font-weight: 700;
+}
+
+.error {
+  color: #b42318;
+}

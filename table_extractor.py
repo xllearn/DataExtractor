@@ -11,7 +11,24 @@ from extraction_types import RuleExtractionResult
 from field_mapping import ALIASES, FieldMapping, load_field_mapping, normalize_record_fields
 
 
-DEDUP_FIELDS = ["人员类型", "医院类型", "类型", "起付标准", "补助限额", "报销比例"]
+DEDUP_FIELDS = [
+    "info_id",
+    "地区名称",
+    "病种名称",
+    "类型",
+    "标化类型",
+    "保险类型",
+    "人员类型",
+    "病种类型",
+    "就诊地域",
+    "医院类型",
+    "就诊情况",
+    "区间",
+    "起付标准",
+    "补助限额",
+    "报销比例",
+    "备注",
+]
 
 
 @dataclass

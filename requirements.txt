@@ -8,5 +8,8 @@ pillow
 openai
 PyYAML
 SQLAlchemy
+fastapi
+uvicorn
+httpx
 paddleocr
 paddlepaddle

@@ -49,6 +49,23 @@ class DiseaseNameRuleTests(unittest.TestCase):
 
         self.assertEqual(result.records[0]["病种名称"], "帕金森病、恶性肿瘤")
 
+    def test_expands_common_disease_suffixes_without_sentence_regression(self):
+        from rule_extractor import extract_key_value_records, normalize_disease_name
+
+        text = "门诊慢特病保障病种范围：类风湿性关节炎、慢性阻塞性肺疾病、尿毒症、心力衰竭、系统性红斑狼疮。"
+
+        self.assertEqual(
+            normalize_disease_name(text),
+            "类风湿性关节炎、慢性阻塞性肺疾病、尿毒症、心力衰竭、系统性红斑狼疮",
+        )
+
+        result = extract_key_value_records(text)
+
+        self.assertEqual(
+            result.records[0]["病种名称"],
+            "类风湿性关节炎、慢性阻塞性肺疾病、尿毒症、心力衰竭、系统性红斑狼疮",
+        )
+
     def test_observed_real_data_long_clauses_are_not_kept_as_disease_names(self):
         from rule_extractor import normalize_disease_name
 

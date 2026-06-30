@@ -168,3 +168,40 @@
 
 - 真实数据运行使用 `--no-ocr`，因为当前环境仍未安装 PaddleOCR/paddlepaddle。
 - `logs/`、`outputs/`、根目录 `.env` 和旧目录 `.env` 均为 ignored，本轮不提交真实数据库连接串、真实 LLM key 或真实输出 Excel。
+
+## 2026-06-30 续 5
+
+### 本轮目标
+
+继续完成阶段 13-15：质量评估、AI 生成数据回归、图片数据入库和人工 Excel 对比、Web API/前端页面、综合验收脚本，并按用户要求把生成的测试结果写入桌面新目录。
+
+### 已完成
+
+- 扩展 `rule_extractor.py` 的病种识别核心词，新增 `类风湿性关节炎`、`慢性阻塞性肺疾病`、`尿毒症`、`心力衰竭`、`系统性红斑狼疮` 等常见病种/后缀识别，同时保留泛化词过滤。
+- 新增 `quality_metrics.py` 与 `excel_compare.py`，支持固定 26 列对比、空值/百分号/金额归一、模糊匹配、整体相似度、核心字段相似度、字段指标、行匹配和差异明细报告。
+- 新增 `samples/ai_generated/` 与 `tests/test_ai_generated_cases.py`，使用 fake LLM 完成稳定回归，不调用真实 LLM。
+- 新增 `image_data_loader.py` 与 `scripts/import_image_data_to_db.py`，支持图片 OCR 路径和 JSON/CSV/XLSX 手工转录 fallback，入库使用 SQLAlchemy 参数化 SQL、事务、测试表和 batch 标记。
+- 新增 `scripts/run_image_import_test.py`，完成图片样本/人工 Excel fallback、写入数据库测试表、从数据库重新读取、生成 Excel、与人工 Excel 对比的端到端验收。
+- 新增 `api_server.py`、`app.py`、`web/index.html`、`web/app.js`、`web/style.css`，提供本机 Web 页面、文章查询、勾选生成 Excel 和下载接口。
+- 新增 `scripts/run_real_db_smoke.py`、`scripts/run_real_db_20.py`、`scripts/run_real_db_compare.py`、`scripts/run_acceptance_all.py`，综合验收默认可写入桌面结果目录。
+- 修复 `table_extractor.py` 表格去重键过粗的问题，保留仅 `区间` 等核心字段不同的待遇行，同时继续合并 HTML/markdown 的重复表格行。
+- 更新 `.gitignore`，忽略 `samples/` 下图片原件，避免误提交真实图片样本。
+- README 与验收清单补充阶段 13-15 使用说明和安全注意事项。
+
+### 已验证
+
+- 桌面结果目录：`C:\Users\admin\Desktop\DataExtractor_test_results_20260630_165827`。
+- `py -m unittest discover -s tests -v`：78 个测试通过。
+- `py -m pytest -q`：78 passed，30 subtests passed。
+- `py -m compileall -x <ignored_dirs> .`：通过；原始 `py -m compileall .` 会递归 ignored 旧目录 `db_to_excel_extractor\.venv` 的第三方包，因此综合验收排除了 `.git/.venv/.venv_ocr/logs/outputs/temp_images/db_to_excel_extractor/tmp_ai_debug`。
+- AI 生成数据测试：通过，满足 `overall_similarity >= 0.85`、`core_field_similarity >= 0.90`。
+- 真实数据库 3 条 smoke：通过，结果 3 行，6 个 sheet，固定 26 列，无已知病种错误长句。
+- 真实数据库 20 条：通过，结果 50 行，`病种名称` 非空 22 行，无已知病种错误长句或泛化词。
+- 图片导入测试：通过，图片/人工 Excel fallback 解析 1 条文章记录，写入数据库测试表，从数据库读回生成 104 行 Excel。
+- 图片导入对比：`overall_similarity=0.961538`，`core_field_similarity=1.0`。
+- 前端 API 测试：通过，覆盖 health、config status、articles、extract、download、路径穿越拒绝、空选择和超限选择。
+
+### 注意事项
+
+- 详细测试产物、真实输出 Excel、图片导入中间 JSON 和对比报告均写到桌面结果目录，不提交到 GitHub。
+- 仓库报告只保留脱敏汇总，不包含真实数据库密码、真实 API Key、真实图片原件或人工 Excel。
