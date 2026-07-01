@@ -1,4 +1,5 @@
 const selectedIds = new Set();
+const WEB_APP_VERSION = "20260701_job_fix";
 
 const elements = {
   configStatus: document.querySelector("#configStatus"),
@@ -159,7 +160,8 @@ async function loadStatus() {
   const llmLabel = status.llm_configured ? "已配置" : "未配置";
   const ocrLabel = status.ocr_available ? "可用" : "不可用";
   const pathLabel = status.config_path ? `，配置：${status.config_path}` : "";
-  elements.configStatus.textContent = `数据库：${databaseLabel}，LLM：${llmLabel}，OCR：${ocrLabel}${pathLabel}`;
+  const versionLabel = status.web_app_version || WEB_APP_VERSION;
+  elements.configStatus.textContent = `数据库：${databaseLabel}，LLM：${llmLabel}，OCR：${ocrLabel}${pathLabel}，版本：${versionLabel}`;
 
   if (!state.ocrAvailable) {
     elements.noOcrInput.checked = true;
@@ -265,7 +267,13 @@ async function extractExcel() {
         no_llm: elements.noLlmInput.checked,
       }),
     });
-    window.location.href = payload.result_page || `/web/result.html?job_id=${encodeURIComponent(payload.job_id)}`;
+    if (!payload.job_id || !String(payload.job_id).startsWith("job_")) {
+      throw new Error("后端返回的任务编号格式不正确，请强制刷新页面后重试");
+    }
+    if (!payload.result_page) {
+      throw new Error("后端未返回 result_page，无法跳转结果页，请强制刷新页面后重试");
+    }
+    window.location.href = payload.result_page;
   } catch (error) {
     setStatus(error.message, true);
     state.extracting = false;

@@ -3,6 +3,7 @@ from pathlib import Path
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+WEB_APP_VERSION = "20260701_job_fix"
 
 
 class WebAppStaticTests(unittest.TestCase):
@@ -44,7 +45,9 @@ class WebAppStaticTests(unittest.TestCase):
         self.assertIn("prevPageBtn", index_source)
         self.assertIn("nextPageBtn", index_source)
         self.assertIn("clearSelectionBtn", index_source)
-        self.assertIn("result.html?job_id=", app_source)
+        self.assertIn("payload.result_page", app_source)
+        self.assertNotIn("payload.result_page ||", app_source)
+        self.assertNotIn("encodeURIComponent(payload.job_id)", app_source)
 
     def test_frontend_guards_stale_scripts_and_pagination_fallback(self):
         app_source = (PROJECT_ROOT / "web" / "app.js").read_text(encoding="utf-8")
@@ -52,8 +55,9 @@ class WebAppStaticTests(unittest.TestCase):
         result_source = (PROJECT_ROOT / "web" / "result.js").read_text(encoding="utf-8")
         result_html_source = (PROJECT_ROOT / "web" / "result.html").read_text(encoding="utf-8")
 
-        self.assertIn('/web/app.js?v=', index_source)
-        self.assertIn('/web/result.js?v=', result_html_source)
+        self.assertIn(f"/web/app.js?v={WEB_APP_VERSION}", index_source)
+        self.assertIn(f"/web/result.js?v={WEB_APP_VERSION}", result_html_source)
+        self.assertIn(WEB_APP_VERSION, app_source)
         self.assertNotIn("downloadLink", app_source)
         self.assertIn("function normalizePagination", app_source)
         self.assertIn("minimumTotal", app_source)
@@ -75,6 +79,8 @@ class WebAppStaticTests(unittest.TestCase):
         self.assertIn("download_url", source)
         self.assertIn("textContent", source)
         self.assertIn("任务不存在或已过期", source)
+        self.assertIn("任务编号格式不正确", source)
+        self.assertIn('jobId.startsWith("job_")', source)
         self.assertIn("error.status === 404", source)
 
 

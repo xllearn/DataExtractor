@@ -29,6 +29,7 @@ from utils import ensure_dir
 
 MAX_SELECTED = 50
 JOB_ID_RE = re.compile(r"^job_[A-Za-z0-9_-]+$")
+WEB_APP_VERSION = "20260701_job_fix"
 LOGGER = logging.getLogger(__name__)
 
 
@@ -64,6 +65,37 @@ def _display_config_path(config_path: str) -> str:
         return str(path.resolve().relative_to(PROJECT_ROOT)).replace("\\", "/")
     except ValueError:
         return path.name
+
+
+def _git_commit() -> str:
+    try:
+        completed = subprocess.run(
+            ["git", "rev-parse", "--short=12", "HEAD"],
+            cwd=PROJECT_ROOT,
+            text=True,
+            capture_output=True,
+            timeout=5,
+            check=True,
+        )
+        commit = completed.stdout.strip()
+        return commit or "unknown"
+    except Exception:
+        return "unknown"
+
+
+def _version_payload() -> dict:
+    return {
+        "project_root": str(PROJECT_ROOT),
+        "cwd": str(Path.cwd()),
+        "git_commit": _git_commit(),
+        "web_app_version": WEB_APP_VERSION,
+        "api_features": {
+            "job_mode": True,
+            "job_metadata_persistence": True,
+            "pagination_count": True,
+            "ocr_status": True,
+        },
+    }
 
 
 def _database_status(config_path: str) -> tuple[bool, str]:
@@ -343,6 +375,10 @@ def create_app(
     def health():
         return {"ok": True}
 
+    @app.get("/api/version")
+    def version():
+        return _version_payload()
+
     @app.get("/api/config/status")
     def config_status():
         settings = load_settings()
@@ -362,6 +398,7 @@ def create_app(
             "config_path": _display_config_path(config_path),
             "database_status_reason": reason,
             "safe_to_query": safe_to_query,
+            "web_app_version": WEB_APP_VERSION,
         }
 
     @app.get("/api/articles")
@@ -501,6 +538,15 @@ def main() -> int:
     parser.add_argument("--field-config", default="config/field_mapping.yml")
     parser.add_argument("--llm-config", default="config/llm_config.yml")
     args = parser.parse_args()
+    version = _version_payload()
+    print("DataExtractor API starting")
+    print(f"cwd={version['cwd']}")
+    print(f"project_root={version['project_root']}")
+    print(f"git_commit={version['git_commit']}")
+    print(f"config={args.config}")
+    print(f"field_config={args.field_config}")
+    print(f"llm_config={args.llm_config}")
+    print(f"web_app_version={version['web_app_version']}")
     uvicorn.run(
         create_app(config_path=args.config, field_config_path=args.field_config, llm_config_path=args.llm_config),
         host=args.host,

@@ -434,3 +434,31 @@ py main.py --config logs/real_db_20/db_config.runtime.yml --field-config config/
 
 - 本轮未发现阻断推送的 P0/P1。
 - 前端 total 不再退化为 20，job_id 不再使用 Excel 文件名，结果页可跨 API 重启读取已完成 job。
+
+## 18. 2026-07-01 旧进程、OCR 环境与真实库复测
+
+### 18.1 问题样本 OCR 环境复测
+
+- OCR 环境：`.venv_ocr`，Python 3.11.9，`paddlepaddle=3.3.1`，`paddleocr=3.7.0`。
+- `get_ocr_status()`：`available=True`，`engine=paddleocr`。
+- 样本：`普惠门诊保·如意版2025 保障详情`，URL `https://mp.weixin.qq.com/s/7meXk1OSTtr9-GTFxFX4HQ`。
+- OCR 可用运行：真实数据库读取 1 条，真实 LLM 调用成功，生成 Excel；6 个 sheet，`结果数据` 固定 26 列。当前策略首轮置信度 medium，未触发 OCR retry。
+- 外部 OCR fallback：同一 URL 提供 `投保年龄：6-65周岁`、`保费：188元/年/人`、`意外门诊急诊费用补偿：100000元`、`报销比例：80%` 文本；生成 Excel 成功。
+- fallback 结果：`补助限额=100000元`、`报销比例=80%`、`备注=投保年龄：6-65周岁`；`人员类型`、`病种名称`、`区间` 为空；字段证据包含 `source=external_ocr_text`。
+
+### 18.2 前端真实库 job 流程复测
+
+- 根因：8000 端口原来仍由 09:33 启动的旧 Python 进程占用，缺少 `/api/version`，且服务旧 JS。
+- 修复后启动：`.venv_ocr\Scripts\python.exe api_server.py --host 127.0.0.1 --port 8000 --config logs/real_db_20/db_config.runtime.yml --field-config config/field_mapping.yml --llm-config config/llm_config.yml`。
+- `/api/version`：返回 `web_app_version=20260701_job_fix`。
+- `/api/config/status`：数据库已配置、LLM 已配置、OCR 可用。
+- 首页：加载 `/web/app.js?v=20260701_job_fix`，`total=7584`，`第 1 / 380 页`。
+- 生成：选择 1 条真实记录后跳转 `job_20260701_132800_b4b70145`，不再使用 Excel 文件名作为 job_id。
+- 结果页：生成成功，preview headers=26、preview rows=1，下载 Excel 包含 6 个 sheet、26 列。
+- 重启后：同一 job 仍可查询和预览。
+
+### 18.3 真实 20 条批量生成
+
+- 命令：`py scripts\run_real_db_20.py --result-dir reports\web_fix_persistent_job_20260701_133010`。
+- 运行结果：通过，`passed=True`。
+- 结论：本轮未发现阻断推送的 P0/P1；真实数据产物不纳入 Git。

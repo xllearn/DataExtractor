@@ -110,6 +110,33 @@ class ApiServerTests(unittest.TestCase):
             self.assertEqual(download.status_code, 200)
             self.assertIn("spreadsheetml", download.headers["content-type"])
 
+    def test_version_endpoint_reports_current_backend_features_without_secrets(self):
+        from api_server import WEB_APP_VERSION
+
+        with tempfile.TemporaryDirectory() as tmp:
+            client = self._client(Path(tmp))
+
+            response = client.get("/api/version")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["web_app_version"], WEB_APP_VERSION)
+        self.assertRegex(payload["git_commit"], r"^[0-9a-f]{7,40}$|^unknown$")
+        self.assertTrue(payload["project_root"])
+        self.assertTrue(payload["cwd"])
+        self.assertEqual(
+            payload["api_features"],
+            {
+                "job_mode": True,
+                "job_metadata_persistence": True,
+                "pagination_count": True,
+                "ocr_status": True,
+            },
+        )
+        self.assertNotIn("sk-", str(payload))
+        self.assertNotIn("DATABASE_URL", str(payload))
+        self.assertNotIn("password", str(payload).lower())
+
     def test_articles_pagination_second_page_and_selected_total(self):
         with tempfile.TemporaryDirectory() as tmp:
             client = self._client(Path(tmp))
@@ -224,6 +251,7 @@ class ApiServerTests(unittest.TestCase):
             created = client.post("/api/extract", json={"selected_ids": ["1"], "mode": "merge", "no_ocr": True}).json()
             job_id = created["job_id"]
             self.assertTrue(job_id.startswith("job_"))
+            self.assertRegex(job_id, r"^job_\d{8}_\d{6}_[0-9a-f]{8}$")
             self.assertNotIn("商业补充保险抽取结果", job_id)
 
             job = self._wait_job(client, job_id)

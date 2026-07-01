@@ -402,3 +402,47 @@
 - 本轮不提交 `.env`、`logs/`、`outputs/`、真实数据库连接串、真实 API Key 或真实测试 Excel。
 - 真实库验收目录 `reports/web_fix_persistent_job_20260701_113409/` 已被忽略，不纳入提交。
 - 未跟踪的 `Q57D2088.tmp` 在本轮开始前已存在，仍未纳入提交。
+
+## 2026-07-01 续 11
+
+### 本轮目标
+
+修复用户截图中结果页仍显示 `job_id: 商业补充保险抽取结果_20260701_131048` 的问题，确认是否为旧进程/旧前端资源导致；新增后端版本确认接口；配置 OCR 环境；使用真实数据库数据完成验证后推送。
+
+### 根因定位
+
+- 当前代码已经返回 `job_YYYYMMDD_HHMMSS_xxxxxxxx`，但 8000 端口仍由 09:33 启动的旧 Python 进程占用。
+- 旧进程的 `/api/version` 返回 404，`/api/config/status` 未包含 `ocr_install_hint` 和 `web_app_version`，并且其 `/web/app.js` 仍包含 `payload.result_page || ...` fallback。
+- 因此截图中的文件名式 job_id 来自旧运行进程或旧缓存前端逻辑，不是当前已提交代码的 `/api/extract` 返回值。
+
+### 已完成
+
+- 新增 `WEB_APP_VERSION=20260701_job_fix`。
+- 新增 `GET /api/version`，返回 `project_root`、`cwd`、`git_commit`、`web_app_version` 和功能开关，不暴露数据库连接串、API Key 或密码。
+- `api_server.py main()` 启动时打印 cwd、project_root、git_commit、config、field_config、llm_config 和 web_app_version，方便识别旧进程。
+- `web/index.html` 和 `web/result.html` 脚本版本改为 `20260701_job_fix`。
+- `web/app.js` 在配置状态旁显示版本号，并且生成后只使用后端返回的 `payload.result_page`；如果后端返回的 job_id 不是 `job_`，直接报错，不再自行拼接结果页 URL。
+- `web/result.js` 对 URL 中非 `job_` 开头的 job_id 直接提示“任务编号格式不正确，请返回列表重新生成。”，不再调用 `/api/jobs/{file_name}`。
+- 使用 Python 3.11 创建 `.venv_ocr`，安装 `requirements.txt`、`paddleocr` 和 `paddlepaddle`；`get_ocr_status()` 返回 OCR 可用。
+
+### 已验证
+
+- TDD 红绿：新增 `/api/version`、前端禁止 fallback 拼 job_id、脚本版本号、结果页非法 job_id 拦截测试；先失败后修复通过。
+- OCR 环境：`.venv_ocr` 使用 Python 3.11.9，`paddle=3.3.1`，`paddleocr` 可导入，`get_ocr_status()` 返回 `available=True`。
+- 真实样本 OCR 环境运行：`普惠门诊保·如意版2025 保障详情` 读取真实数据库 1 条，生成 Excel 成功，6 个 sheet、26 列；OCR 可用但首轮置信度 medium，当前策略未触发 OCR retry。
+- 真实样本外部 OCR fallback：同一 URL 使用外部 OCR 文本生成成功；`补助限额=100000元`、`报销比例=80%`、`备注=投保年龄：6-65周岁`，`人员类型`、`病种名称`、`区间` 均为空；字段证据包含 `source=external_ocr_text`。
+- 前端真实库验证：关闭旧 8000 进程后用 `.venv_ocr` 重启，`/api/version` 返回 `20260701_job_fix`，`/api/config/status` 返回 `ocr_available=true`。
+- 浏览器验证：首页加载 `/web/app.js?v=20260701_job_fix`，显示 `total=7584`、`第 1 / 380 页`，OCR 可用且“跳过 OCR”默认未勾选。
+- 前端生成验证：选择 1 条真实记录后跳转 `/web/result.html?job_id=job_20260701_132800_b4b70145`，结果页成功，preview headers=26、rows=1，下载 Excel 6 个 sheet、26 列。
+- 服务重启验证：重启后同一 job 仍可查询和预览，结果页刷新后仍显示成功，不再出现 `Not Found`。
+- 随机 20 条真实数据库验收：`py scripts\run_real_db_20.py --result-dir reports/web_fix_persistent_job_20260701_133010`，`passed=True`。
+- 全量 `unittest`：`py -m unittest discover -s tests -v`，115 tests OK。
+- `pytest`：`py -m pytest -q`，115 passed，36 subtests passed，1 个 FastAPI/Starlette deprecation warning。
+- `compileall`：`py -m compileall -q -x "..." .`，通过，退出码 0。
+- AI 生成数据测试：`py -m unittest tests.test_ai_generated_cases -v`，1 test OK。
+
+### 注意事项
+
+- `.venv_ocr/`、`logs/`、`outputs/`、真实数据库报告产物均不提交。
+- 8000 端口当前由新启动的 Python 3.11 API 服务占用，前端地址为 `http://127.0.0.1:8000/`。
+- 未跟踪的 `Q57D2088.tmp` 在本轮开始前已存在，仍未纳入提交。

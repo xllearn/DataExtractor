@@ -157,3 +157,37 @@ Frontend browser flow details:
 | AI generated data | passed |
 | real DB 20 | passed, `reports/web_fix_persistent_job_20260701_113409` |
 | frontend browser restart flow | passed |
+
+## 2026-07-01 Supplemental Stale Web Job Flow OCR Acceptance
+
+- Overall status: passed.
+- P0/P1: none found.
+- Root cause confirmed: port 8000 was still served by an old 09:33 Python process. It lacked `/api/version` and served old JS that could fall back to constructing result URLs from `payload.job_id`.
+- Added `/api/version` with `project_root`, `cwd`, `git_commit`, `web_app_version=20260701_job_fix`, and feature flags.
+- Startup now prints cwd, project_root, git_commit, config paths and web_app_version.
+- Frontend JS cache version is now `20260701_job_fix`.
+- List page no longer constructs `result.html?job_id=...`; it requires API `result_page`.
+- Result page rejects non-`job_` ids before calling the backend.
+- OCR environment configured in `.venv_ocr` with Python 3.11.9; `get_ocr_status()` returns available.
+
+| Check | Result |
+| --- | --- |
+| `/api/version` regression | passed |
+| stale frontend job flow regression | passed |
+| OCR environment import/status | passed |
+| issue sample OCR-capable run | passed |
+| issue sample external OCR fallback | passed |
+| frontend real DB flow | passed, `job_20260701_132800_b4b70145` |
+| service restart job preview | passed |
+| real DB random 20 | passed, `reports/web_fix_persistent_job_20260701_133010` |
+| `py -m unittest discover -s tests -v` | passed, 115 tests |
+| `py -m pytest -q` | passed, 115 tests, 36 subtests, 1 warning |
+| project `compileall` with ignored-dir excludes | passed |
+| AI generated data | passed |
+
+Observed frontend state:
+
+- `/api/version`: `20260701_job_fix`.
+- `/api/config/status`: `ocr_available=true`, `ocr_engine=paddleocr`.
+- Home page: `total=7584`, `第 1 / 380 页`, JS `/web/app.js?v=20260701_job_fix`.
+- Result page: success, preview headers=26, preview rows=1, downloadable 6-sheet workbook.

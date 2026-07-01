@@ -451,6 +451,7 @@ http://127.0.0.1:8000/
 页面支持数据库状态查看、关键词查询、勾选记录、`no_ocr` / `no_llm` 选项、生成 Excel 和下载 Excel。接口包括：
 
 - `GET /api/health`
+- `GET /api/version`
 - `GET /api/config/status`
 - `GET /api/articles?keyword=医保&limit=20&offset=0`
 - `POST /api/extract`
@@ -462,7 +463,9 @@ http://127.0.0.1:8000/
 
 `/api/extract` 创建后台 job 并返回 `job_id`、`status_url` 和 `result_page`。前端会自动跳转到 `/web/result.html?job_id=...`，结果页轮询 job 状态，成功后调用 preview API 预览 `结果数据` sheet 前 100 行，并提供下载按钮。job metadata 会写入 `outputs/web/jobs/<job_id>.json`，服务重启后已完成任务仍可查询和预览。下载接口只允许下载 `outputs/web/` 下由系统生成的 xlsx 文件，并防止路径穿越。当前页面没有登录权限系统，仅建议在本机或内网受控环境使用。
 
-首页和结果页脚本使用版本参数加载，例如 `/web/app.js?v=...`，用于避免浏览器继续执行旧版脚本造成 DOM id 不匹配。若页面曾打开过旧版本，刷新页面即可加载新脚本。
+`/api/version` 用于确认当前后端是不是本仓库当前版本，会返回 `project_root`、`cwd`、`git_commit`、`web_app_version` 和功能开关，不返回数据库连接串、API Key 或密码。启动 API 时终端也会打印这些信息，方便排查是否仍在运行旧目录、旧分支或旧进程。
+
+首页和结果页脚本使用版本参数加载，例如 `/web/app.js?v=20260701_job_fix` 和 `/web/result.js?v=20260701_job_fix`，用于避免浏览器继续执行旧版脚本造成 DOM id 不匹配或把 Excel 文件名当作 job_id。若页面曾打开过旧版本，请先重启后端，再用 `Ctrl+F5` 强制刷新；如果浏览器仍加载旧 JS，可清缓存或用无痕窗口打开。
 
 ### 综合验收
 
@@ -498,6 +501,23 @@ pip install paddlepaddle
 ```
 
 如果 PaddleOCR 在当前 Windows 或 Python 版本无法安装，建议使用 Python 3.10/3.11 创建单独环境，或先使用外部 OCR 文本 fallback。
+
+Windows 上 Python 3.14 可能没有稳定的 PaddleOCR/PaddlePaddle wheel，建议使用 Python 3.11 单独环境：
+
+```powershell
+py -3.11 -m venv .venv_ocr
+.\.venv_ocr\Scripts\python.exe -m pip install --upgrade pip
+.\.venv_ocr\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv_ocr\Scripts\python.exe -c "from image_ocr import get_ocr_status; print(get_ocr_status())"
+```
+
+用 OCR 环境启动 Web API：
+
+```powershell
+.\.venv_ocr\Scripts\python.exe api_server.py --host 127.0.0.1 --port 8000 --config logs/real_db_20/db_config.runtime.yml --field-config config/field_mapping.yml --llm-config config/llm_config.yml
+```
+
+此时前端 `/api/config/status` 应显示 `ocr_available=true`，页面显示 `OCR：可用`，并且“跳过 OCR”默认不勾选。
 
 `/api/config/status` 会返回 `ocr_available`、`ocr_status_reason`、`ocr_install_hint` 和 `ocr_engine`。如果 OCR 可用，前端默认不勾选“跳过 OCR”；如果 OCR 不可用，前端会默认勾选并禁用“跳过 OCR”，并提示 `OCR 不可用，图片型表格可能无法抽取。请安装 OCR 依赖或提供外部 OCR 文本。`。当文章存在图片、没有 HTML 表格且 OCR 不可用或失败时，采集日志和抽取评估会写入：
 

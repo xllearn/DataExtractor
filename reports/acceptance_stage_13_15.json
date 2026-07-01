@@ -284,5 +284,106 @@
       "commit_artifacts": false,
       "preexisting_untracked": "Q57D2088.tmp"
     }
+  },
+  "supplemental_2026_07_01_stale_web_job_flow_ocr_env": {
+    "overall_passed": true,
+    "p0_p1": "none",
+    "root_cause": {
+      "old_process_on_port_8000": true,
+      "old_process_started_at": "2026-07-01 09:33:22",
+      "old_api_version_404": true,
+      "old_js_result_page_fallback": true
+    },
+    "fixes": {
+      "api_version_endpoint": true,
+      "startup_diagnostics": true,
+      "web_app_version": "20260701_job_fix",
+      "frontend_requires_result_page": true,
+      "frontend_rejects_non_job_id": true,
+      "result_page_rejects_non_job_id": true,
+      "ocr_python_311_venv": true
+    },
+    "ocr_environment": {
+      "python": "3.11.9",
+      "paddlepaddle": "3.3.1",
+      "paddleocr": "3.7.0",
+      "get_ocr_status_available": true
+    },
+    "issue_sample": {
+      "source_url": "https://mp.weixin.qq.com/s/7meXk1OSTtr9-GTFxFX4HQ",
+      "ocr_capable_run_passed": true,
+      "ocr_capable_sheet_count": 6,
+      "ocr_capable_headers": 26,
+      "ocr_retry_triggered": false,
+      "external_ocr_run_passed": true,
+      "external_ocr_sheet_count": 6,
+      "external_ocr_headers": 26,
+      "external_ocr_limit": "100000元",
+      "external_ocr_ratio": "80%",
+      "external_ocr_note": "投保年龄：6-65周岁",
+      "person_type_empty": true,
+      "disease_name_empty": true,
+      "interval_empty": true,
+      "field_evidence_external_ocr_text": true
+    },
+    "frontend_browser_flow": {
+      "passed": true,
+      "port": 8000,
+      "api_version": "20260701_job_fix",
+      "ocr_available": true,
+      "ocr_engine": "paddleocr",
+      "script": "/web/app.js?v=20260701_job_fix",
+      "initial_total": 7584,
+      "initial_page": "第 1 / 380 页",
+      "skip_ocr_checked": false,
+      "skip_ocr_disabled": false,
+      "selected_rows": 1,
+      "job_id": "job_20260701_132800_b4b70145",
+      "job_status": "success",
+      "preview_headers": 26,
+      "preview_rows": 1,
+      "download_workbook_sheet_count": 6,
+      "download_workbook_headers": 26,
+      "restart_still_success": true,
+      "restart_preview_headers": 26,
+      "restart_preview_rows": 1,
+      "console_errors": []
+    },
+    "commands": {
+      "focused_red_green": {
+        "passed": true
+      },
+      "unittest": {
+        "passed": true,
+        "tests": 115
+      },
+      "pytest": {
+        "passed": true,
+        "tests": 115,
+        "subtests": 36,
+        "warnings": 1
+      },
+      "compileall_project": {
+        "passed": true
+      },
+      "ai_generated": {
+        "passed": true,
+        "tests": 1
+      },
+      "real_db_20": {
+        "passed": true,
+        "result_dir": "reports/web_fix_persistent_job_20260701_133010"
+      }
+    },
+    "artifact_notes": {
+      "commit_artifacts": false,
+      "ignored_dirs": [
+        ".venv_ocr",
+        "logs",
+        "outputs",
+        "reports/web_fix_persistent_job_20260701_133010"
+      ],
+      "preexisting_untracked": "Q57D2088.tmp"
+    }
   }
 }

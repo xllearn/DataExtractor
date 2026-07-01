@@ -310,3 +310,38 @@ Frontend restart flow details:
 - Metadata file existed under `outputs/web/jobs/` and did not contain the absolute output directory.
 - Result after API restart: same job returned success, preview headers=26, preview rows=1.
 - Downloaded workbook: 6 sheets, `结果数据` fixed 26 headers.
+
+## 2026-07-01 Supplemental Stale Web Job Flow and OCR Environment Verification
+
+- Overall status: passed.
+- P0/P1: none found.
+- Root cause: port 8000 was still served by an old Python process started at 09:33. That process had no `/api/version` endpoint and served old frontend logic containing `payload.result_page || ...`.
+- Added `/api/version` and startup diagnostics so the running backend can be matched to the current repository root, cwd, git commit and `web_app_version=20260701_job_fix`.
+- Frontend script versions were bumped to `20260701_job_fix`.
+- `web/app.js` now requires `payload.result_page` and refuses non-`job_` job ids; it no longer constructs a result URL from `payload.job_id`.
+- `web/result.js` now rejects non-`job_` URL ids with `任务编号格式不正确，请返回列表重新生成。`.
+- Configured `.venv_ocr` with Python 3.11.9, `paddlepaddle=3.3.1` and `paddleocr=3.7.0`; `get_ocr_status()` returned OCR available.
+
+| Check | Result |
+| --- | --- |
+| TDD focused red/green for version and stale job flow | passed |
+| OCR dependency imports in `.venv_ocr` | passed |
+| issue sample with OCR-capable environment | passed, 6 sheets, 26 headers |
+| issue sample with external OCR fallback | passed, extracted `补助限额=100000元`, `报销比例=80%` |
+| frontend real DB flow on port 8000 | passed, `job_20260701_132800_b4b70145` |
+| service restart job persistence | passed, preview headers=26, rows=1 |
+| real DB random 20 | passed, `reports/web_fix_persistent_job_20260701_133010` |
+| `py -m unittest discover -s tests -v` | passed, 115 tests |
+| `py -m pytest -q` | passed, 115 tests, 36 subtests, 1 warning |
+| project `compileall` with ignored-dir excludes | passed |
+| AI generated data | passed, 1 test |
+
+Frontend verification details:
+
+- `/api/version`: `web_app_version=20260701_job_fix`, git commit visible, no secrets.
+- `/api/config/status`: `ocr_available=true`, `ocr_engine=paddleocr`.
+- Home page: loaded `/web/app.js?v=20260701_job_fix`, showed `total=7584`, `第 1 / 380 页`.
+- OCR UI: “跳过 OCR” default unchecked and enabled.
+- Result URL: `/web/result.html?job_id=job_20260701_132800_b4b70145`.
+- Result page: success, preview headers=26, preview rows=1, download visible.
+- Reload after API restart: same result page still success.

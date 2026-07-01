@@ -79,6 +79,11 @@ async function pollJob() {
     return;
   }
   setText(elements.jobIdText, `job_id: ${jobId}`);
+  if (!jobId.startsWith("job_")) {
+    setText(elements.statusText, "任务编号格式不正确，请返回列表重新生成。");
+    elements.statusText.className = "error";
+    return;
+  }
   try {
     const job = await fetchJson(`/api/jobs/${encodeURIComponent(jobId)}`);
     setText(elements.statusText, job.message || job.status);
