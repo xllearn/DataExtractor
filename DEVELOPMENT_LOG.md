@@ -576,3 +576,32 @@ Polish the lightweight Web frontend after reviewing the current list page and re
 - This round does not change backend extraction behavior or API contracts.
 - No `.env`, `logs/`, `outputs/`, generated Excel files, database credentials, API keys or browser screenshots are committed.
 - The pre-existing untracked `Q57D2088.tmp` remains untracked and is not part of this task.
+
+## 2026-07-01 Round 15
+
+### Goal
+
+Complete the first-stage repository optimization on `codex/db-to-excel-extractor`: stabilize the current CLI without changing business field semantics or the fixed 26-column Excel output order.
+
+### Completed
+
+- Added `requirements-dev.txt` and `pytest.ini` for explicit development dependency and test configuration.
+- Added focused tests for LLM timeout/retry/detail responses, OCR image download security, run summaries, and runtime/pipeline module exports.
+- Split runtime helpers into `runtime.py` and single-record extraction orchestration into `pipeline.py`; `main.py` now coordinates CLI/config/input/batch/output while preserving old helper imports for compatibility.
+- Added `run_summary.py` to write `summary.json`, normalized `failed_records.jsonl`, and `retry_ids.txt` under `--log-dir`.
+- Extended `LLMClient` with `extract_detail()`, typed response metadata, timeout, max retries, exponential backoff, error classification, elapsed-time logging, usage capture, and sensitive text masking.
+- Hardened OCR image downloads: http/https only, localhost/private/link-local/metadata IP rejection, streaming download, byte limit, status and content-type checks, Pillow validation, and masked errors.
+- Updated README with development dependency installation, test commands, dry-run notes, run summary/retry usage, LLM retry environment variables, and OCR download safety limits.
+
+### Verification
+
+- Focused new tests: `py -m pytest tests/test_llm_client.py tests/test_image_download_security.py tests/test_run_summary.py tests/test_runtime_pipeline_split.py -q` passed, 15 tests.
+- Full pytest after implementation: `py -m pytest -q` passed with the existing FastAPI/Starlette deprecation warning.
+- Compile check: `py -m compileall -q -x "..." .` passed.
+- CLI dry-run: `py main.py --dry-run --input-xlsx "samples/db/新建 XLSX 工作表.xlsx" --limit 5 --log-dir logs/stage1_dry_run` passed; `summary.json`, `failed_records.jsonl`, and `retry_ids.txt` were generated under the dry-run log directory.
+
+### Notes
+
+- The fixed Excel business headers and main result sheet order were not changed.
+- No `.env`, API keys, database credentials, generated Excel files, `logs/`, `outputs/`, or `temp_images/` are committed.
+- The pre-existing untracked `Q57D2088.tmp` remains untracked and is not part of this task.

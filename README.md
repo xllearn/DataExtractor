@@ -16,6 +16,19 @@ pip install -r requirements.txt
 
 `paddleocr` 和 `paddlepaddle` 体积较大，Windows 环境安装可能较慢或失败。初次调试主流程时，可以先临时注释 `requirements.txt` 里的这两行，或运行时加 `--no-ocr`。
 
+开发和测试依赖单独放在 `requirements-dev.txt`：
+
+```bash
+pip install -r requirements-dev.txt
+pytest
+```
+
+当前测试不依赖真实数据库、真实 LLM、真实 OCR 或真实网络；外部调用路径通过 mock/fake 覆盖。Windows 上如果 `python` 命令指向 Microsoft Store shim，可使用：
+
+```powershell
+py -m pytest
+```
+
 ## 配置 .env
 
 复制 `.env.example` 为 `.env`，填写数据库密码和大模型 API Key：
@@ -172,6 +185,16 @@ LLM 配置路径可用 `--llm-config` 指定，默认读取 `config/llm_config.y
 python main.py --llm-config config/llm_config.yml --limit 5 --mode merge
 ```
 
+LLM 客户端支持超时、最大重试次数和指数退避。可通过环境变量配置：
+
+```text
+LLM_TIMEOUT=60
+LLM_MAX_RETRIES=2
+LLM_RETRY_BACKOFF=1
+```
+
+`LLM_MAX_RETRIES` 表示首次请求失败后的额外重试次数；限流、网络超时和 5xx 服务端错误会重试，API Key 未配置或认证失败会直接报错。日志只记录脱敏后的错误、调用耗时和兼容接口返回的 usage token 统计，不会输出 API Key。
+
 LLM 输出格式默认使用 v2 JSON object，可用 `--llm-format legacy` 回退旧 JSON 数组 prompt：
 
 ```bash
@@ -203,6 +226,8 @@ python main.py --strict-config --config config/db_config.yml --limit 20
 - `--fail-fast`：第一条记录处理失败后立即停止。
 - `--max-record-errors`：允许的单条记录失败数，默认 20；达到阈值后停止后续记录。
 - `--strict-config`：非 `--input-xlsx` 模式下强制使用配置化数据库读取，缺少 `DATABASE_URL` 或表配置时直接报错。
+
+如果本地没有样本 Excel，可用测试中的临时 workbook 或自建包含 `Title`、`Content`/`Context`、`AuditTime` 的调试 Excel 跑 dry-run；dry-run 不初始化 LLM、不执行 OCR retry、不写 Excel，适合验证读取、规则、日志和摘要路径。
 
 ## 输出模式
 
@@ -334,6 +359,22 @@ logs/run.log
 
 ```text
 logs/failed_records.jsonl
+```
+
+每次运行结束后还会生成运行摘要和重跑文件：
+
+```text
+logs/summary.json
+logs/retry_ids.txt
+```
+
+`summary.json` 包含 `run_id`、起止时间、耗时、输入模式、总记录数、成功/失败数、输出行数、LLM 解析失败数、OCR 触发/失败数、人工复核数、输出 Excel 路径和日志目录。`failed_records.jsonl` 每行包含同一个 `run_id`、记录索引、`source_id`、`info_id`、标题、来源 URL、失败阶段和脱敏错误。`retry_ids.txt` 每行一个可用于后续 `--selected-ids` 的 ID，优先级为 `info_id`、`_source_id`、`SourceURL`。
+
+重跑失败记录示例：
+
+```powershell
+$ids = (Get-Content logs\retry_ids.txt) -join ","
+py main.py --config config/db_config.yml --selected-ids $ids --mode merge
 ```
 
 抽取置信度评估：
@@ -488,6 +529,15 @@ IMAGE_BASE_URL=https://example.com
 ```
 
 如果 `IMAGE_BASE_URL` 为空，程序会记录日志并跳过相对路径图片。
+
+图片下载默认只允许 `http`/`https`，拒绝 `localhost`、`127.0.0.1`、`0.0.0.0`、`::1`、私有网段、link-local 和 metadata 地址（如 `169.254.169.254`）。下载使用 streaming，默认最大 10MB，优先要求响应 `Content-Type` 为 `image/*`，并在写入后用 Pillow 验证图片可打开。可通过环境变量调整：
+
+```text
+IMAGE_DOWNLOAD_TIMEOUT=20
+IMAGE_MAX_BYTES=10485760
+```
+
+下载失败、非图片响应或图片验证失败会作为单张图片错误写入 OCR 诊断，不会中断整批记录处理。
 
 ### PaddleOCR 安装失败怎么办？
 
