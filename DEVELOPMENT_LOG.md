@@ -281,3 +281,41 @@
 
 - 本轮使用用户提供的 `商业补充保险抽取结果_20260701_094411.xlsx` 复现到 `人员类型=6` 和 `人员类型=6-65周岁` 问题；该 Excel 仅用于定位，不提交到 GitHub。
 - 未跟踪的 `Q57D2088.tmp` 在本轮开始前已存在，未纳入提交。
+
+## 2026-07-01 续 8
+
+### 本轮目标
+
+继续修复 `DataExtractor` 的前端分页、生成后结果页、OCR 不可用诊断、外部 OCR 文本 fallback、图片表格风险提示、病种名称免责条款过滤，以及人员类型年龄范围清洗专项测试。
+
+### 已完成
+
+- `/api/config/status` 返回 `ocr_available`、`ocr_status_reason`、`ocr_engine`，不暴露本地路径、数据库连接串、API Key 或 token。
+- `image_ocr.py` 新增 `get_ocr_status()`，API、CLI 和采集日志复用 OCR 可用性判断。
+- `confidence.py` 对“有图片、无 HTML 表格、无 OCR 文本”的记录追加风险提示：`图片表格未识别，抽取结果可能缺失保障责任、保额、保费、等待期、赔付比例等字段`。
+- `main.py` 新增 `--ocr-text-file`、`--ocr-json-file`，支持本机 OCR 不可用时注入外部 OCR 文本；字段证据标记 `source=external_ocr_text`。
+- 采集日志新增 `ocr_available`、`ocr_status_reason`、`ocr_skipped_reason`、`ocr_failure_reason`、`external_ocr_used`。
+- `rule_extractor.py` 增加免责/责任免除/健康告知/不能投保/除外责任等负向上下文过滤，避免把免责条款里的 `高血压、糖尿病、慢性肝炎、女性更年期综合征、男性更年期综合征` 写入 `病种名称`。
+- `/api/articles` 返回真实分页元数据：`total`、`limit`、`offset`、`page`、`page_size`、`total_pages`、`has_next`、`has_prev`。
+- `db_reader.py` 新增安全参数化 count query，用于默认配置化数据库读取的真实 total。
+- `/api/extract` 切换为轻量 job 模式，返回 `job_id`、`status_url`、`result_page`；新增 `/api/jobs/{job_id}` 和 `/api/jobs/{job_id}/preview`。
+- Excel preview 只读取 `结果数据` sheet，最多返回前 100 行，不返回服务器本地真实路径。
+- `web/index.html`、`web/app.js`、`web/style.css` 实现上一页、下一页、页码、每页 10/20/50、总数、跨页保留选择、清空已选择和 OCR 不可用提示。
+- 新增 `web/result.html`、`web/result.js`，结果页轮询 job 状态、展示预览、提供下载和返回列表。
+- 新增/更新测试：`tests/test_ocr_status_and_image_risk.py`、`tests/test_person_type_quality.py`、`tests/test_api_server.py`、`tests/test_web_app_static.py`、`tests/test_disease_name_quality.py`。
+- 更新 `README.md`、`TEST_REPORT.md`、`REAL_DB_20_TEST_REPORT.md`、`reports/ACCEPTANCE_STAGE_13_15.md` 和 `reports/acceptance_stage_13_15.json`。
+
+### 已验证
+
+- 聚焦测试：`py -m unittest tests.test_api_server tests.test_web_app_static tests.test_ocr_status_and_image_risk tests.test_person_type_quality tests.test_disease_name_quality.DiseaseNameRuleTests.test_exemption_context_diseases_are_not_treated_as_covered_diseases -v`，20 tests OK。
+- 全量 `unittest`：`py -m unittest discover -s tests -v`，107 tests OK。
+- `py -m pytest -q`：107 passed，36 subtests passed，1 个 FastAPI/Starlette deprecation warning。
+- `py -m compileall -q -x "..." .`：通过，退出码 0。
+- 真实样本无 OCR：`普惠门诊保·如意版2025 保障详情` 生成成功；`病种名称`、`人员类型`、`区间` 均为空；采集日志 `ocr_triggered=true`、`ocr_skipped_reason=用户选择跳过 OCR`，review reason 写入图片表格未识别风险。
+- 真实样本外部 OCR fallback：同一 URL 使用 `--ocr-text-file` 生成成功；`补助限额=100000元`、`报销比例=80%`、`备注=投保年龄：6-65周岁`，`人员类型` 和 `病种名称` 为空，字段证据包含 `source=external_ocr_text`。
+- 真实配置 API smoke：`/api/config/status`、`/api/articles?limit=1&offset=0`、`/api/extract` job、`/api/jobs/{job_id}`、`/api/jobs/{job_id}/preview` 通过；返回 `total=7584`、preview headers=26、preview rows=1。
+
+### 注意事项
+
+- 本轮功能仍不提交 `.env`、`logs/`、`outputs/`、真实数据库连接串、真实 API Key 或真实样本 Excel。
+- 未跟踪的 `Q57D2088.tmp` 在本轮开始前已存在，仍未纳入提交。

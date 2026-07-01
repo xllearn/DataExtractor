@@ -15,6 +15,8 @@ EVAL_FIELDS = [
     "ocr_risk_score",
 ]
 
+IMAGE_TABLE_RISK_MESSAGE = "图片表格未识别，抽取结果可能缺失保障责任、保额、保费、等待期、赔付比例等字段"
+
 DEFAULT_EVIDENCE_EXCLUDE = {
     "文章时间",
     "审核日期",
@@ -180,6 +182,8 @@ def calculate_ocr_risk_score(
     if not has_table_text:
         score -= 15
         reasons.append("未提取到HTML表格")
+    if image_count > 0 and not has_table_text and not has_ocr_text:
+        reasons.append(IMAGE_TABLE_RISK_MESSAGE)
     if image_count >= 3:
         score -= 10
         reasons.append("图片数量较多")

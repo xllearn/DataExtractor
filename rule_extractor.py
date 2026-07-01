@@ -9,6 +9,7 @@ from field_cleaners import (
     PERSON_TYPE_FIELD,
     age_range_note,
     append_note,
+    extract_age_range,
     extract_reimbursement_interval,
     invalid_person_type_note,
     normalize_person_type,
@@ -26,6 +27,7 @@ FIELD_ALIASES: Dict[str, List[str]] = {
 
 VALUE_PATTERN = r"([0-9]+(?:\.[0-9]+)?\s*(?:%|％|元|万元|万|亿元)?)"
 DISEASE_FIELD = "病种名称"
+AGE_CONTEXT_ALIASES = ["投保年龄", "参保年龄", "承保年龄", "年龄范围"]
 GENERIC_DISEASE_TERMS = {"大病", "既往症", "慢性病", "特殊病", "疾病病", "了解症"}
 INVALID_DISEASE_MARKERS = [
     "旨在",
@@ -68,6 +70,18 @@ INVALID_DISEASE_SEGMENT_MARKERS = [
     "基础",
     "主要表现",
     "一组",
+]
+NEGATIVE_DISEASE_CONTEXT_MARKERS = [
+    "免责",
+    "责任免除",
+    "投保须知",
+    "健康告知",
+    "既往症",
+    "不能投保",
+    "不可投保",
+    "除外责任",
+    "不承担",
+    "不予赔付",
 ]
 DISEASE_CORE_PATTERNS = [
     r"类风湿性关节炎",
@@ -138,6 +152,8 @@ def normalize_disease_name(value: str) -> str:
     text = _clean_disease_segment(value)
     if not text:
         return ""
+    if any(marker in text for marker in NEGATIVE_DISEASE_CONTEXT_MARKERS):
+        return ""
 
     normalized_parts: List[str] = []
     for segment in [part for part in DISEASE_SPLIT_RE.split(text) if part]:
@@ -190,6 +206,14 @@ def _field_aliases(field_mapping: FieldMapping) -> Dict[str, List[str]]:
 
 def _find_field_values(text: str, field_mapping: FieldMapping) -> List[Tuple[str, str, str, str]]:
     hits: List[Tuple[str, str, str, str]] = []
+    for alias in AGE_CONTEXT_ALIASES:
+        pattern = re.compile(rf"({re.escape(alias)}\s*(?:[:：为是])\s*([^\n。；;，,、|]+))")
+        for match in pattern.finditer(text):
+            evidence = match.group(1).strip()
+            value = match.group(2).strip()
+            age_range = extract_age_range(value)
+            if age_range:
+                hits.append((NOTE_FIELD, f"{alias}：{age_range}", evidence, "age_context_redirect_to_note"))
     for field, aliases in _field_aliases(field_mapping).items():
         if field == DISEASE_FIELD:
             continue
@@ -262,6 +286,9 @@ def _find_disease_names(text: str, field_mapping: FieldMapping) -> List[Tuple[st
         normalized = normalize_disease_name(match.group(2))
         if normalized:
             return [(DISEASE_FIELD, normalized, match.group(1).strip(), "disease_name_strong_context", 0.82)]
+
+    if any(marker in text for marker in NEGATIVE_DISEASE_CONTEXT_MARKERS):
+        return []
 
     normalized = normalize_disease_name(text)
     if normalized:

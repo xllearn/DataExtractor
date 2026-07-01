@@ -203,3 +203,44 @@ py api_server.py --host 127.0.0.1 --port 8000 --config logs/real_db_20/db_config
 - 真实 20 条：通过，输出 `outputs/real_db_20/disease_fix_20/商业补充保险抽取结果_20260630_151622.xlsx`；结果数据 27 行，`病种名称` 非空 12 行。
 - 病种名称检查：附件列出的错误长句、`大病/既往症/慢性病/特殊病` 泛化词，以及本轮观察到的国家/参保/高价自费类坏片段均无命中。
 - 安全检查要求：`logs/`、`outputs/`、`.env` 均不提交；`config/llm_config.yml` 保持环境变量占位，不写真实 key。
+
+## 2026-07-01 OCR、分页和结果页修复补充
+
+### 修复范围
+
+- `/api/config/status` 增加 `ocr_available`、`ocr_status_reason`、`ocr_engine`，并继续脱敏。
+- `/api/articles` 返回真实分页字段：`total`、`limit`、`offset`、`page`、`page_size`、`total_pages`、`has_next`、`has_prev`。
+- `/api/extract` 改为 job 模式，返回 `job_id`、`status_url`、`result_page`。
+- 新增 `/api/jobs/{job_id}` 和 `/api/jobs/{job_id}/preview`，preview 只返回 `结果数据` sheet 前 100 行。
+- 前端新增分页 UI、跨页选择、清空已选择、生成后跳转结果页和结果页 Excel 预览。
+- CLI 新增 `--ocr-text-file`、`--ocr-json-file` 外部 OCR fallback，字段证据标记 `source=external_ocr_text`。
+- 图片表格未识别风险会写入抽取评估和采集日志相关字段。
+- 免责/健康告知/不能投保/除外责任中的疾病不会进入 `病种名称`。
+- `6-65周岁`、`18-70岁`、`出生满30天-65周岁` 不会进入 `人员类型`。
+
+### 新增/更新测试
+
+- `tests/test_api_server.py`：分页、job、preview、下载、非法/未完成 job JSON 错误。
+- `tests/test_web_app_static.py`：分页状态、结果页文件、preview API 调用和安全 DOM 渲染。
+- `tests/test_ocr_status_and_image_risk.py`：OCR 状态、图片表格风险、外部 OCR 文本进入 prompt 和字段证据。
+- `tests/test_person_type_quality.py`：人员类型年龄范围清洗。
+- `tests/test_disease_name_quality.py`：免责上下文疾病过滤。
+
+### 自动化验证
+
+- `py -m unittest tests.test_api_server tests.test_web_app_static tests.test_ocr_status_and_image_risk tests.test_person_type_quality tests.test_disease_name_quality.DiseaseNameRuleTests.test_exemption_context_diseases_are_not_treated_as_covered_diseases -v`：20 tests OK。
+- `py -m unittest discover -s tests -v`：107 tests OK。
+- `py -m pytest -q`：107 passed，36 subtests passed，1 个 FastAPI/Starlette deprecation warning。
+- `py -m compileall -q -x "..." .`：通过，退出码 0。
+
+### 真实样本复测
+
+- 样本：`普惠门诊保·如意版2025 保障详情`，`https://mp.weixin.qq.com/s/7meXk1OSTtr9-GTFxFX4HQ`。
+- 无 OCR 运行：生成成功；`病种名称`、`人员类型`、`区间` 均为空；采集日志 `ocr_triggered=true`、`ocr_skipped_reason=用户选择跳过 OCR`，并写入图片表格未识别风险。
+- 外部 OCR 文本运行：生成成功；`补助限额=100000元`、`报销比例=80%`、`备注=投保年龄：6-65周岁`；`人员类型` 和 `病种名称` 为空；字段证据包含 `source=external_ocr_text`。
+
+### 真实配置 API smoke
+
+- 启动：`py api_server.py --host 127.0.0.1 --port 8012 --config logs/real_db_20/db_config.runtime.yml --field-config config/field_mapping.yml --llm-config config/llm_config.yml`。
+- 验证：`/api/config/status`、`/api/articles?limit=1&offset=0`、`/api/extract` job、`/api/jobs/{job_id}`、`/api/jobs/{job_id}/preview`。
+- 结果：通过；`database_configured=true`、`safe_to_query=true`、`ocr_available=false`、`total=7584`、job success、preview headers=26、preview rows=1。

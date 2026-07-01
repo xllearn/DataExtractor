@@ -124,6 +124,23 @@ def _keyword_clause(config: DbConfig, keyword_groups: Sequence[Sequence[str]], k
     return "(" + joiner.join(group_clauses) + ")"
 
 
+def _query_filters(
+    config: DbConfig,
+    selected_ids: Sequence[str] | None,
+    keyword_groups: Sequence[Sequence[str]] | None,
+    keyword_mode: str,
+    params: Dict[str, Any],
+) -> List[str]:
+    where_parts: List[str] = []
+    selected_ids = list(selected_ids or [])
+    keyword_groups = list(keyword_groups or [])
+    if selected_ids:
+        where_parts.append(_selected_ids_clause(config, selected_ids, params))
+    elif keyword_groups:
+        where_parts.append(_keyword_clause(config, keyword_groups, keyword_mode, params))
+    return where_parts
+
+
 def build_article_query(
     config: DbConfig,
     limit: int,
@@ -135,14 +152,7 @@ def build_article_query(
     table = quote_table(config.source.table)
     columns = _configured_columns(config)
     params: Dict[str, Any] = {"limit": int(limit), "offset": int(offset)}
-    where_parts: List[str] = []
-
-    selected_ids = list(selected_ids or [])
-    keyword_groups = list(keyword_groups or [])
-    if selected_ids:
-        where_parts.append(_selected_ids_clause(config, selected_ids, params))
-    elif keyword_groups:
-        where_parts.append(_keyword_clause(config, keyword_groups, keyword_mode, params))
+    where_parts = _query_filters(config, selected_ids, keyword_groups, keyword_mode, params)
 
     order_columns = [
         validate_identifier(config.source.audit_time_column, "source.audit_time_column"),
@@ -156,6 +166,21 @@ def build_article_query(
     if order_exprs:
         sql += " ORDER BY " + ", ".join(order_exprs)
     sql += " LIMIT :limit OFFSET :offset"
+    return BuiltQuery(statement=sql, params=params)
+
+
+def build_article_count_query(
+    config: DbConfig,
+    selected_ids: Sequence[str] | None = None,
+    keyword_groups: Sequence[Sequence[str]] | None = None,
+    keyword_mode: str = "or",
+) -> BuiltQuery:
+    table = quote_table(config.source.table)
+    params: Dict[str, Any] = {}
+    where_parts = _query_filters(config, selected_ids, keyword_groups, keyword_mode, params)
+    sql = f"SELECT COUNT(*) AS total FROM {table}"
+    if where_parts:
+        sql += " WHERE " + " AND ".join(where_parts)
     return BuiltQuery(statement=sql, params=params)
 
 
@@ -211,3 +236,24 @@ def fetch_configured_records(
         return [map_row_to_record(dict(row), config) for row in rows]
     except Exception as exc:
         raise DbReaderError(f"配置化数据库读取失败: {exc}") from exc
+
+
+def count_configured_records(
+    config: DbConfig,
+    selected_ids: Sequence[str] | None = None,
+    keyword_groups: Sequence[Sequence[str]] | None = None,
+    keyword_mode: str = "or",
+) -> int:
+    try:
+        from sqlalchemy import create_engine, text
+    except Exception as exc:  # pragma: no cover - dependency guard
+        raise DbReaderError("缺少 SQLAlchemy 依赖，请运行 pip install -r requirements.txt") from exc
+
+    query = build_article_count_query(config, selected_ids, keyword_groups, keyword_mode)
+    try:
+        engine = create_engine(config.database_url)
+        with engine.connect() as connection:
+            value = connection.execute(text(query.statement), query.params).scalar()
+        return int(value or 0)
+    except Exception as exc:
+        raise DbReaderError(f"配置化数据库 count 失败: {exc}") from exc

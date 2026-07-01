@@ -130,5 +130,7 @@ def build_arg_parser(settings: Settings) -> argparse.ArgumentParser:
     parser.add_argument("--no-excel", action="store_true")
     parser.add_argument("--save-intermediate", action="store_true")
     parser.add_argument("--no-ocr", action="store_true")
+    parser.add_argument("--ocr-text-file", default="")
+    parser.add_argument("--ocr-json-file", default="")
     parser.add_argument("--debug", action="store_true")
     return parser

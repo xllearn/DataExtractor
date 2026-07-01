@@ -7,13 +7,13 @@ from typing import Any, Dict, List
 
 from config import PROJECT_ROOT, LlmConfigError, apply_llm_config, build_arg_parser, load_settings
 from config_loader import ConfigError, load_db_config, parse_selected_ids, validate_db_config_ready
-from confidence import evaluate_rows, mark_ocr_failed
+from confidence import IMAGE_TABLE_RISK_MESSAGE, evaluate_rows, mark_ocr_failed
 from db import fetch_records
 from db_reader import DbReaderError, fetch_configured_records
 from excel_writer import build_merge_output_path, build_single_output_path, write_extraction_workbook
 from field_mapping import FieldMapping, FieldMappingError, load_field_mapping
 from html_parser import parse_html_content
-from image_ocr import process_image_ocr
+from image_ocr import get_ocr_status, process_image_ocr
 from input_xlsx import read_records_from_xlsx
 from json_utils import normalize_llm_rows
 from keyword_utils import expand_keyword_groups
@@ -96,6 +96,34 @@ def _empty_metadata() -> Dict[str, List[Dict[str, Any]]]:
     }
 
 
+def load_external_ocr_inputs(text_file: str = "", json_file: str = "") -> tuple[str, Dict[str, str]]:
+    text = ""
+    mapping: Dict[str, str] = {}
+    if text_file:
+        path = resolve_input_path(text_file)
+        text = path.read_text(encoding="utf-8")
+    if json_file:
+        path = resolve_input_path(json_file)
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(payload, dict):
+            raise ValueError("--ocr-json-file 必须是 JSON object")
+        mapping = {str(key): str(value) for key, value in payload.items() if str(value).strip()}
+    return text, mapping
+
+
+def external_ocr_for_record(record: Dict[str, Any], global_text: str, mapping: Dict[str, str]) -> str:
+    keys = [
+        str(record.get("_source_id") or ""),
+        str(record.get("SourceURL") or ""),
+        str(record.get("info_id") or ""),
+        str((record.get("_direct_fields") or {}).get("info_id") or ""),
+    ]
+    for key in keys:
+        if key and key in mapping:
+            return mapping[key]
+    return global_text
+
+
 def _score_from_evals(evaluations: List[Dict[str, Any]]) -> int:
     scores = [int(item.get("confidence_score", 0)) for item in evaluations]
     return min(scores) if scores else 0
@@ -158,6 +186,9 @@ def extract_record_rows(
     save_intermediate: bool = False,
     metadata: Dict[str, List[Dict[str, Any]]] | None = None,
     ocr_func=process_image_ocr,
+    external_ocr_text: str = "",
+    ocr_status: Dict[str, Any] | None = None,
+    ocr_skipped_reason: str = "",
 ) -> List[Dict[str, Any]]:
     metadata = metadata if metadata is not None else _empty_metadata()
     field_mapping = field_mapping or load_field_mapping(None)
@@ -167,14 +198,32 @@ def extract_record_rows(
     logger.info("首轮抽取不启用OCR")
     source_id = str(record.get("_source_id") or record.get("SourceURL") or record_index)
     info_id = str(record.get("info_id") or (record.get("_direct_fields") or {}).get("info_id") or "")
+    ocr_status = ocr_status or get_ocr_status()
+    external_ocr_text = str(external_ocr_text or "").strip()
+    external_ocr_used = bool(external_ocr_text)
+    external_ocr_evidence = []
+    if external_ocr_used:
+        external_ocr_evidence.append(
+            {
+                "source_id": source_id,
+                "info_id": info_id,
+                "field": "备注",
+                "value": external_ocr_text[:300],
+                "evidence": "external_ocr_text",
+                "confidence": 0.7,
+                "source": "external_ocr_text",
+                "rule_name": "external_ocr_text",
+            }
+        )
     table_result = extract_table_records(record.get("Content") or "", parsed.tables_text, source_id=source_id, info_id=info_id, config=table_mapping, field_mapping=field_mapping)
-    text_rule_result = extract_key_value_records(parsed.clean_text, source_id=source_id, info_id=info_id, field_mapping=field_mapping)
+    rule_text = "\n".join(part for part in [parsed.clean_text, external_ocr_text] if part)
+    text_rule_result = extract_key_value_records(rule_text, source_id=source_id, info_id=info_id, field_mapping=field_mapping)
     log_rule_result(table_result, logs_dir, record_index, "table_rule", logger)
     log_rule_result(text_rule_result, logs_dir, record_index, "text_rule", logger)
-    field_evidence = [*table_result.field_evidence, *text_rule_result.field_evidence]
+    field_evidence = [*table_result.field_evidence, *text_rule_result.field_evidence, *external_ocr_evidence]
 
     initial_llm_result = extract_once_detail(
-        record, record_index, llm_client, logs_dir, today, parsed.clean_text, parsed.tables_text, "", len(parsed.image_urls),
+        record, record_index, llm_client, logs_dir, today, parsed.clean_text, parsed.tables_text, external_ocr_text, len(parsed.image_urls),
         "initial", debug, logger, field_mapping, llm_format, table_result.records, text_rule_result.records, field_evidence, no_llm=no_llm
     )
     initial_llm_evidence = llm_result_to_field_evidence(initial_llm_result, source_id, info_id, attempt="initial") if not no_llm else []
@@ -189,7 +238,7 @@ def extract_record_rows(
         field_mapping,
     )
     initial_rows = initial_fusion.records
-    initial_field_evidence = _with_context(initial_fusion.field_evidence, record_index, "initial")
+    initial_field_evidence = _with_context([*initial_fusion.field_evidence, *external_ocr_evidence], record_index, "initial")
     initial_conflicts = _with_context(initial_fusion.conflict_evidence, record_index, "initial")
     _append_jsonl_many(logs_dir / "field_evidence.jsonl", initial_field_evidence)
     _append_jsonl_many(logs_dir / "rule_extract_errors.jsonl", _with_context([*table_result.errors, *text_rule_result.errors], record_index, "initial"))
@@ -199,17 +248,30 @@ def extract_record_rows(
         record,
         parsed.clean_text,
         parsed.tables_text,
-        "",
+        external_ocr_text,
         image_count=len(parsed.image_urls),
-        ocr_attempted=False,
+        ocr_attempted=external_ocr_used,
     )
     initial_eval_payloads = log_eval_entries(initial_evals, logs_dir, record_index, record, "initial", debug, logger)
 
     retry_eval = min(initial_evals, key=lambda item: item["confidence_score"]) if initial_evals else None
-    should_retry = bool(retry_eval and retry_eval["should_retry_with_ocr"] and ocr_enabled and parsed.image_urls and not no_llm)
+    ocr_wanted = bool(retry_eval and retry_eval["should_retry_with_ocr"] and parsed.image_urls and not no_llm and not external_ocr_used)
+    should_retry = bool(ocr_wanted and ocr_enabled)
     if not should_retry:
         if retry_eval and retry_eval["should_retry_with_ocr"] and not ocr_enabled:
             logger.info("置信度建议OCR重跑，但OCR已关闭")
+        skipped_reason = ""
+        if ocr_wanted and not ocr_enabled:
+            skipped_reason = ocr_skipped_reason or ("OCR依赖不可用" if not ocr_status.get("available") else "OCR未启用")
+        review_reason_parts = []
+        if no_llm:
+            review_reason_parts.append("no_llm 模式下跳过 LLM/OCR")
+        if initial_fusion.review_reason:
+            review_reason_parts.append(initial_fusion.review_reason)
+        if ocr_wanted and not ocr_enabled:
+            review_reason_parts.append(IMAGE_TABLE_RISK_MESSAGE)
+        if external_ocr_used:
+            review_reason_parts.append("使用了外部 OCR 文本")
         metadata["field_evidence"].extend(initial_field_evidence)
         metadata["conflict_evidence"].extend(initial_conflicts)
         metadata["extract_evaluations"].extend(initial_eval_payloads)
@@ -222,15 +284,20 @@ def extract_record_rows(
                 "status": "success",
                 "attempt": "initial",
                 "input_mode": input_mode,
-                "ocr_triggered": False,
+                "ocr_available": bool(ocr_status.get("available")),
+                "ocr_status_reason": ocr_status.get("reason", ""),
+                "ocr_triggered": ocr_wanted,
                 "ocr_trigger_reason": retry_eval.get("ocr_trigger_reason") if retry_eval else "",
+                "ocr_skipped_reason": skipped_reason,
                 "image_count": len(parsed.image_urls),
                 "ocr_success_count": 0,
                 "ocr_failure_count": 0,
+                "ocr_failure_reason": "",
+                "external_ocr_used": external_ocr_used,
                 "llm_format": "none" if no_llm else llm_format,
                 "llm_parse_success": not bool(initial_llm_result.parse_error),
-                "need_manual_review": initial_fusion.need_manual_review,
-                "review_reason": ("no_llm 模式下跳过 LLM/OCR；" if no_llm else "") + initial_fusion.review_reason,
+                "need_manual_review": bool(initial_fusion.need_manual_review or (ocr_wanted and not ocr_enabled)),
+                "review_reason": "；".join(part for part in review_reason_parts if part),
                 "output_rows": len(initial_rows),
                 "error": "",
                 "initial_confidence_score": _score_from_evals(initial_evals),
@@ -248,6 +315,7 @@ def extract_record_rows(
                 {
                     "parsed_text": parsed.clean_text,
                     "tables_text": parsed.tables_text,
+                    "external_ocr_text": external_ocr_text,
                     "table_rule_records": table_result.records,
                     "text_rule_records": text_rule_result.records,
                     "llm_raw_output": initial_llm_result.raw_output,
@@ -283,15 +351,20 @@ def extract_record_rows(
                 "status": "success",
                 "attempt": "initial",
                 "input_mode": input_mode,
+                "ocr_available": bool(ocr_status.get("available")),
+                "ocr_status_reason": ocr_status.get("reason", ""),
                 "ocr_triggered": True,
                 "ocr_trigger_reason": retry_eval["ocr_trigger_reason"] if retry_eval else "",
+                "ocr_skipped_reason": "",
                 "image_count": len(parsed.image_urls),
                 "ocr_success_count": ocr_summary.success_count,
                 "ocr_failure_count": ocr_summary.failure_count,
+                "ocr_failure_reason": f"成功{ocr_summary.success_count}张，失败{ocr_summary.failure_count}张",
+                "external_ocr_used": external_ocr_used,
                 "llm_format": llm_format,
                 "llm_parse_success": not bool(initial_llm_result.parse_error),
                 "need_manual_review": True,
-                "review_reason": "OCR 全部失败，保留首轮融合结果",
+                "review_reason": f"OCR 全部失败，保留首轮融合结果；{IMAGE_TABLE_RISK_MESSAGE}",
                 "output_rows": len(initial_rows),
                 "error": "",
                 "initial_confidence_score": _score_from_evals(initial_evals),
@@ -366,11 +439,16 @@ def extract_record_rows(
             "status": "success",
             "attempt": final_attempt,
             "input_mode": input_mode,
+            "ocr_available": bool(ocr_status.get("available")),
+            "ocr_status_reason": ocr_status.get("reason", ""),
             "ocr_triggered": True,
             "ocr_trigger_reason": retry_eval["ocr_trigger_reason"] if retry_eval else "",
+            "ocr_skipped_reason": "",
             "image_count": len(parsed.image_urls),
             "ocr_success_count": ocr_summary.success_count,
             "ocr_failure_count": ocr_summary.failure_count,
+            "ocr_failure_reason": f"成功{ocr_summary.success_count}张，失败{ocr_summary.failure_count}张" if ocr_summary.failure_count else "",
+            "external_ocr_used": external_ocr_used,
             "llm_format": llm_format,
             "llm_parse_success": not bool(retry_llm_result.parse_error),
             "need_manual_review": final_fusion.need_manual_review,
@@ -580,6 +658,21 @@ def main() -> int:
         append_jsonl(logs_dir / "failed_records.jsonl", {"phase": "llm_config", "error": str(exc)})
         return 1
     runtime_flags = resolve_runtime_flags(args.dry_run, args.no_llm, args.no_ocr, args.no_excel)
+    ocr_status = get_ocr_status()
+    ocr_skipped_reason = ""
+    if runtime_flags["no_ocr"]:
+        ocr_skipped_reason = "用户选择跳过 OCR"
+    elif not settings.ocr_enabled:
+        ocr_skipped_reason = "配置关闭 OCR"
+    elif not ocr_status.get("available"):
+        ocr_skipped_reason = "OCR依赖不可用"
+    try:
+        external_ocr_text, external_ocr_mapping = load_external_ocr_inputs(args.ocr_text_file, args.ocr_json_file)
+    except Exception as exc:
+        masked_error = mask_sensitive_text(str(exc))
+        logger.error("外部 OCR 文本读取失败: %s", masked_error)
+        append_jsonl(logs_dir / "failed_records.jsonl", {"phase": "external_ocr", "error": masked_error})
+        return 1
 
     try:
         field_mapping = load_field_mapping(args.field_config)
@@ -652,7 +745,7 @@ def main() -> int:
         return 1
 
     llm_client = None if runtime_flags["no_llm"] else LLMClient(settings)
-    ocr_enabled = settings.ocr_enabled and not runtime_flags["no_ocr"]
+    ocr_enabled = settings.ocr_enabled and not runtime_flags["no_ocr"] and bool(ocr_status.get("available"))
     all_rows: List[Dict[str, Any]] = []
     all_metadata = _empty_metadata()
     output_paths: List[Path] = []
@@ -684,6 +777,9 @@ def main() -> int:
                 input_mode=input_mode,
                 save_intermediate=args.save_intermediate,
                 metadata=record_metadata,
+                external_ocr_text=external_ocr_for_record(record, external_ocr_text, external_ocr_mapping),
+                ocr_status=ocr_status,
+                ocr_skipped_reason=ocr_skipped_reason,
             )
 
             if args.mode == "single" and not runtime_flags["no_excel"]:

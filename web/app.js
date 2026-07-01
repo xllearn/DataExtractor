@@ -10,15 +10,26 @@ const elements = {
   extractBtn: document.querySelector("#extractBtn"),
   selectionStatus: document.querySelector("#selectionStatus"),
   jobStatus: document.querySelector("#jobStatus"),
-  downloadLink: document.querySelector("#downloadLink"),
+  ocrWarning: document.querySelector("#ocrWarning"),
+  clearSelectionBtn: document.querySelector("#clearSelectionBtn"),
   selectPageInput: document.querySelector("#selectPageInput"),
   articleBody: document.querySelector("#articleBody"),
+  prevPageBtn: document.querySelector("#prevPageBtn"),
+  nextPageBtn: document.querySelector("#nextPageBtn"),
+  pageStatus: document.querySelector("#pageStatus"),
+  pageSizeSelect: document.querySelector("#pageSizeSelect"),
+  totalStatus: document.querySelector("#totalStatus"),
 };
 
 const state = {
   safeToQuery: false,
+  ocrAvailable: false,
   loadingArticles: false,
   extracting: false,
+  currentPage: 1,
+  pageSize: Number(elements.pageSizeSelect.value || 20),
+  totalItems: 0,
+  totalPages: 0,
 };
 
 function setStatus(text, isError = false) {
@@ -28,12 +39,17 @@ function setStatus(text, isError = false) {
 
 function updateSelection() {
   elements.selectionStatus.textContent = `已选择 ${selectedIds.size} 条`;
+  elements.clearSelectionBtn.disabled = selectedIds.size === 0;
 }
 
 function setQueryEnabled(enabled) {
-  elements.searchBtn.disabled = !enabled || state.loadingArticles;
-  elements.extractBtn.disabled = !enabled || state.extracting;
-  elements.selectPageInput.disabled = !enabled;
+  const canQuery = Boolean(enabled);
+  elements.searchBtn.disabled = !canQuery || state.loadingArticles;
+  elements.extractBtn.disabled = !canQuery || state.extracting;
+  elements.selectPageInput.disabled = !canQuery;
+  elements.prevPageBtn.disabled = !canQuery || state.loadingArticles || state.currentPage <= 1;
+  elements.nextPageBtn.disabled = !canQuery || state.loadingArticles || state.currentPage >= state.totalPages;
+  elements.pageSizeSelect.disabled = !canQuery || state.loadingArticles;
 }
 
 function setEmptyRow(message) {
@@ -100,20 +116,42 @@ function appendSourceCell(row, value) {
   row.appendChild(cell);
 }
 
+function updatePagination(payload) {
+  state.totalItems = Number(payload.total || 0);
+  state.totalPages = Number(payload.total_pages || 0);
+  state.currentPage = Number(payload.page || 1);
+  state.pageSize = Number(payload.page_size || state.pageSize);
+  elements.pageStatus.textContent = `第 ${state.totalPages ? state.currentPage : 0} / ${state.totalPages} 页`;
+  elements.totalStatus.textContent = `总计 ${state.totalItems} 条`;
+  elements.selectPageInput.checked = false;
+  setQueryEnabled(state.safeToQuery);
+}
+
 async function loadStatus() {
   const status = await fetchJson("/api/config/status");
   state.safeToQuery = Boolean(status.safe_to_query);
+  state.ocrAvailable = Boolean(status.ocr_available);
   const databaseLabel = status.database_configured ? "已配置" : "未配置";
   const llmLabel = status.llm_configured ? "已配置" : "未配置";
   const ocrLabel = status.ocr_available ? "可用" : "不可用";
   const pathLabel = status.config_path ? `，配置：${status.config_path}` : "";
   elements.configStatus.textContent = `数据库：${databaseLabel}，LLM：${llmLabel}，OCR：${ocrLabel}${pathLabel}`;
+
+  if (!state.ocrAvailable) {
+    elements.noOcrInput.checked = true;
+    elements.noOcrInput.disabled = true;
+    elements.ocrWarning.textContent = "OCR 不可用，图片表格可能无法抽取";
+  } else {
+    elements.noOcrInput.disabled = false;
+    elements.ocrWarning.textContent = "";
+  }
   setQueryEnabled(state.safeToQuery);
 
   if (!state.safeToQuery) {
     selectedIds.clear();
     elements.selectPageInput.checked = false;
     updateSelection();
+    updatePagination({total: 0, total_pages: 0, page: 0, page_size: state.pageSize});
     setEmptyRow("暂无数据，数据库未配置或查询失败");
     setStatus(status.database_status_reason || "数据库未配置，请用 --config 指定可用数据库配置后重启服务", true);
   } else {
@@ -125,7 +163,7 @@ async function loadStatus() {
 function renderArticles(items) {
   elements.articleBody.replaceChildren();
   if (!items || items.length === 0) {
-    setEmptyRow("暂无数据");
+    setEmptyRow("暂无匹配数据");
     updateSelection();
     return;
   }
@@ -151,7 +189,7 @@ function renderArticles(items) {
   updateSelection();
 }
 
-async function searchArticles() {
+async function searchArticles(page = 1) {
   if (!state.safeToQuery) {
     setStatus("数据库未配置，请用 --config 指定可用数据库配置后重启服务", true);
     return;
@@ -161,11 +199,14 @@ async function searchArticles() {
   setStatus("查询中...");
   try {
     const keyword = encodeURIComponent(elements.keywordInput.value.trim());
-    const payload = await fetchJson(`/api/articles?keyword=${keyword}&limit=50&offset=0`);
+    const offset = Math.max(0, (page - 1) * state.pageSize);
+    const payload = await fetchJson(`/api/articles?keyword=${keyword}&limit=${state.pageSize}&offset=${offset}`);
     renderArticles(payload.items);
-    setStatus(`已加载 ${payload.total} 条`);
+    updatePagination(payload);
+    setStatus(payload.items && payload.items.length ? "查询完成" : "暂无匹配数据");
   } catch (error) {
     renderArticles([]);
+    updatePagination({total: 0, total_pages: 0, page: 0, page_size: state.pageSize});
     setStatus(error.message, true);
   } finally {
     state.loadingArticles = false;
@@ -183,10 +224,10 @@ async function extractExcel() {
     return;
   }
 
-  elements.downloadLink.hidden = true;
   state.extracting = true;
   setQueryEnabled(true);
-  setStatus("生成中，请勿关闭页面；大批量请使用命令行");
+  const riskText = state.ocrAvailable ? "" : "OCR 不可用：图片型表格无法被识别，抽取结果可能不完整";
+  setStatus(riskText || "已创建任务，准备跳转结果页");
   try {
     const payload = await fetchJson("/api/extract", {
       method: "POST",
@@ -198,12 +239,9 @@ async function extractExcel() {
         no_llm: elements.noLlmInput.checked,
       }),
     });
-    elements.downloadLink.href = payload.download_url;
-    elements.downloadLink.hidden = false;
-    setStatus("生成成功");
+    window.location.href = payload.result_page || `/web/result.html?job_id=${encodeURIComponent(payload.job_id)}`;
   } catch (error) {
     setStatus(error.message, true);
-  } finally {
     state.extracting = false;
     setQueryEnabled(state.safeToQuery);
   }
@@ -226,20 +264,49 @@ elements.selectPageInput.addEventListener("change", () => {
   updateSelection();
 });
 
+elements.clearSelectionBtn.addEventListener("click", () => {
+  selectedIds.clear();
+  for (const input of elements.articleBody.querySelectorAll("input[type=checkbox]")) {
+    input.checked = false;
+  }
+  elements.selectPageInput.checked = false;
+  updateSelection();
+});
+
 elements.refreshBtn.addEventListener("click", async () => {
   try {
     const status = await loadStatus();
-    if (status.safe_to_query) await searchArticles();
+    if (status.safe_to_query) await searchArticles(state.currentPage || 1);
   } catch (error) {
     setStatus(error.message, true);
   }
 });
-elements.searchBtn.addEventListener("click", () => searchArticles());
+elements.searchBtn.addEventListener("click", () => {
+  state.currentPage = 1;
+  searchArticles(1);
+});
+elements.keywordInput.addEventListener("keydown", (event) => {
+  if (event.key === "Enter") {
+    state.currentPage = 1;
+    searchArticles(1);
+  }
+});
+elements.prevPageBtn.addEventListener("click", () => {
+  if (state.currentPage > 1) searchArticles(state.currentPage - 1);
+});
+elements.nextPageBtn.addEventListener("click", () => {
+  if (state.currentPage < state.totalPages) searchArticles(state.currentPage + 1);
+});
+elements.pageSizeSelect.addEventListener("change", () => {
+  state.pageSize = Number(elements.pageSizeSelect.value || 20);
+  state.currentPage = 1;
+  searchArticles(1);
+});
 elements.extractBtn.addEventListener("click", () => extractExcel());
 
 loadStatus()
   .then((status) => {
-    if (status.safe_to_query) return searchArticles();
+    if (status.safe_to_query) return searchArticles(1);
     return null;
   })
   .catch((error) => setStatus(error.message, true));

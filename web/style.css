@@ -17,9 +17,11 @@ body {
 
 .toolbar,
 .controls,
-.status {
+.status,
+.pagination {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 12px;
   margin-bottom: 16px;
 }
@@ -43,6 +45,13 @@ input[type="search"] {
   padding: 8px 10px;
   border: 1px solid #cbd2d9;
   border-radius: 6px;
+}
+
+select {
+  padding: 8px 10px;
+  border: 1px solid #cbd2d9;
+  border-radius: 6px;
+  background: #fff;
 }
 
 button,
@@ -86,7 +95,22 @@ th {
   color: #b42318;
 }
 
+.warning {
+  color: #9a3412;
+}
+
 .empty {
   color: #697586;
   text-align: center;
+}
+
+.table-scroll {
+  max-width: 100%;
+  overflow-x: auto;
+  border: 1px solid #d9e2ec;
+  background: #fff;
+}
+
+.preview table {
+  min-width: 1320px;
 }

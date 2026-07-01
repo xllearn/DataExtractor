@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>DataExtractor 结果</title>
+    <link rel="stylesheet" href="/web/style.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <header class="toolbar">
+        <div>
+          <h1>抽取结果</h1>
+          <p id="jobIdText">job_id: --</p>
+        </div>
+        <button id="backBtn" type="button">返回列表</button>
+      </header>
+
+      <section class="status">
+        <span id="statusText">读取任务状态...</span>
+        <span id="riskText" class="warning"></span>
+        <a id="downloadBtn" href="#" hidden>下载 Excel</a>
+      </section>
+
+      <section class="preview">
+        <div class="table-scroll">
+          <table>
+            <thead id="previewHead"></thead>
+            <tbody id="previewBody"></tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+    <script src="/web/result.js"></script>
+  </body>
+</html>

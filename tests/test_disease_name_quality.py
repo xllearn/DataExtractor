@@ -49,6 +49,17 @@ class DiseaseNameRuleTests(unittest.TestCase):
 
         self.assertEqual(result.records[0]["病种名称"], "帕金森病、恶性肿瘤")
 
+    def test_exemption_context_diseases_are_not_treated_as_covered_diseases(self):
+        from rule_extractor import extract_key_value_records, normalize_disease_name
+
+        text = "健康告知及责任免除：高血压、糖尿病、慢性肝炎、女性更年期综合征、男性更年期综合征不能投保。"
+
+        self.assertEqual(normalize_disease_name(text), "")
+        result = extract_key_value_records(text)
+
+        disease_name = result.records[0].get("病种名称", "") if result.records else ""
+        self.assertEqual(disease_name, "")
+
     def test_expands_common_disease_suffixes_without_sentence_regression(self):
         from rule_extractor import extract_key_value_records, normalize_disease_name
 

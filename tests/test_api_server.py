@@ -1,4 +1,5 @@
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -18,15 +19,16 @@ class ApiServerTests(unittest.TestCase):
 
         records = [
             {
-                "_source_id": "1",
-                "info_id": "INFO-1",
-                "Title": "西安市医保政策",
-                "SourceURL": "https://example.com/1",
+                "_source_id": str(index),
+                "info_id": f"INFO-{index}",
+                "Title": f"西安市医保政策 {index}",
+                "SourceURL": f"https://example.com/{index}",
                 "AuditTime": "2026-05-20",
                 "areaname": "陕西省-西安市",
                 "insurancetypename": "城镇职工",
                 "Content": "<p>保障病种范围：类风湿性关节炎，报销比例80%</p>",
             }
+            for index in range(1, 26)
         ]
 
         def provider(keyword="", selected_ids=None, limit=50, offset=0):
@@ -36,12 +38,12 @@ class ApiServerTests(unittest.TestCase):
                 rows = [record for record in rows if str(record["_source_id"]) in selected or record["SourceURL"] in selected]
             if keyword:
                 rows = [record for record in rows if keyword in record["Title"]]
-            return rows[offset : offset + limit]
+            return {"items": rows[offset : offset + limit], "total": len(rows)}
 
-        def runner(selected_ids, mode, no_ocr, no_llm):
+        def runner(selected_ids, mode, no_ocr, no_llm, external_ocr_text=""):
             output = output_dir / "商业补充保险抽取结果.xlsx"
             write_extraction_workbook(
-                [{"info_id": "INFO-1", "地区名称": "陕西省-西安市", "病种名称": "类风湿性关节炎"}],
+                [{"info_id": "INFO-1", "地区名称": "陕西省-西安市", "病种名称": "类风湿性关节炎", "备注": external_ocr_text or "--"}],
                 output,
                 template_path=output_dir / "missing.xlsx",
                 field_mapping=load_field_mapping(None),
@@ -50,6 +52,17 @@ class ApiServerTests(unittest.TestCase):
 
         app = create_app(record_provider=provider, extract_runner=runner, output_dir=output_dir, log_dir=output_dir / "logs")
         return TestClient(app)
+
+    def _wait_job(self, client: TestClient, job_id: str) -> dict:
+        payload = {}
+        for _ in range(30):
+            response = client.get(f"/api/jobs/{job_id}")
+            self.assertEqual(response.status_code, 200)
+            payload = response.json()
+            if payload["status"] in {"success", "failed"}:
+                return payload
+            time.sleep(0.05)
+        self.fail(f"job did not finish: {payload}")
 
     def test_health_config_articles_extract_and_download(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -62,19 +75,78 @@ class ApiServerTests(unittest.TestCase):
             self.assertNotIn("sk-", str(status))
 
             articles = client.get("/api/articles?keyword=医保&limit=10").json()
-            self.assertEqual(articles["total"], 1)
+            self.assertEqual(articles["total"], 25)
+            self.assertEqual(articles["limit"], 10)
+            self.assertEqual(articles["offset"], 0)
+            self.assertEqual(articles["page"], 1)
+            self.assertEqual(articles["page_size"], 10)
+            self.assertEqual(articles["total_pages"], 3)
+            self.assertTrue(articles["has_next"])
+            self.assertFalse(articles["has_prev"])
             self.assertEqual(articles["items"][0]["id"], "1")
             self.assertNotIn("Content", articles["items"][0])
 
             extract = client.post("/api/extract", json={"selected_ids": ["1"], "mode": "merge", "no_ocr": True}).json()
-            self.assertEqual(extract["status"], "success")
-            self.assertTrue(extract["download_url"].startswith("/api/download/"))
-            self.assertIn("%", extract["download_url"])
+            self.assertEqual(extract["status"], "queued")
+            self.assertTrue(extract["job_id"])
+            self.assertEqual(extract["status_url"], f"/api/jobs/{extract['job_id']}")
+            self.assertEqual(extract["result_page"], f"/web/result.html?job_id={extract['job_id']}")
             self.assertNotIn(str(Path(tmp)), str(extract))
 
-            download = client.get(extract["download_url"])
+            job = self._wait_job(client, extract["job_id"])
+            self.assertEqual(job["status"], "success")
+            self.assertTrue(job["download_url"].startswith("/api/download/"))
+            self.assertIn("%", job["download_url"])
+            self.assertTrue(job["preview_url"].endswith("/preview"))
+
+            preview = client.get(job["preview_url"])
+            self.assertEqual(preview.status_code, 200)
+            preview_payload = preview.json()
+            self.assertEqual(preview_payload["sheet"], "结果数据")
+            self.assertEqual(len(preview_payload["headers"]), 26)
+            self.assertLessEqual(preview_payload["row_count"], 100)
+
+            download = client.get(job["download_url"])
             self.assertEqual(download.status_code, 200)
             self.assertIn("spreadsheetml", download.headers["content-type"])
+
+    def test_articles_pagination_second_page_and_selected_total(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            client = self._client(Path(tmp))
+
+            first = client.get("/api/articles?keyword=医保&limit=10&offset=0").json()
+            second = client.get("/api/articles?keyword=医保&limit=10&offset=10").json()
+            selected = client.get("/api/articles?selected_ids=1,3,5&limit=2&offset=0").json()
+
+            self.assertEqual(first["total"], 25)
+            self.assertEqual(first["total_pages"], 3)
+            self.assertEqual(first["items"][0]["id"], "1")
+            self.assertEqual(second["page"], 2)
+            self.assertTrue(second["has_prev"])
+            self.assertEqual(second["items"][0]["id"], "11")
+            self.assertEqual(selected["total"], 3)
+            self.assertEqual(len(selected["items"]), 2)
+
+    def test_job_preview_rejects_unknown_and_unfinished_jobs(self):
+        from api_server import create_app
+
+        with tempfile.TemporaryDirectory() as tmp:
+            output_dir = Path(tmp)
+
+            def slow_runner(*_args, **_kwargs):
+                time.sleep(0.3)
+                return output_dir / "missing.xlsx"
+
+            client = TestClient(create_app(record_provider=lambda **_: {"items": [], "total": 0}, extract_runner=slow_runner, output_dir=output_dir))
+
+            missing = client.get("/api/jobs/nope")
+            self.assertEqual(missing.status_code, 404)
+            self.assertEqual(missing.headers["content-type"].split(";")[0], "application/json")
+
+            created = client.post("/api/extract", json={"selected_ids": ["1"]}).json()
+            preview = client.get(f"/api/jobs/{created['job_id']}/preview")
+            self.assertEqual(preview.status_code, 400)
+            self.assertEqual(preview.headers["content-type"].split(";")[0], "application/json")
 
     def test_extract_validates_selection_and_download_rejects_traversal(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -178,11 +250,11 @@ source:
             )
 
             response = client.post("/api/extract", json={"selected_ids": ["1"], "mode": "merge"})
-            payload = response.json()
+            created = response.json()
+            payload = self._wait_job(client, created["job_id"])
 
-            self.assertEqual(response.status_code, 500)
-            self.assertEqual(response.headers["content-type"].split(";")[0], "application/json")
-            self.assertEqual(payload["error_type"], "ExtractFailed")
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(payload["status"], "failed")
             self.assertNotIn("abc", str(payload))
             self.assertNotIn("sk-test-token", str(payload))
 

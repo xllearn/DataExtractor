@@ -452,11 +452,15 @@ http://127.0.0.1:8000/
 
 - `GET /api/health`
 - `GET /api/config/status`
-- `GET /api/articles?keyword=医保&limit=50&offset=0`
+- `GET /api/articles?keyword=医保&limit=20&offset=0`
 - `POST /api/extract`
+- `GET /api/jobs/<job_id>`
+- `GET /api/jobs/<job_id>/preview`
 - `GET /api/download/<file_id>`
 
-下载接口只允许下载 `outputs/web/` 下由系统生成的 xlsx 文件，并防止路径穿越。当前页面没有登录权限系统，仅建议在本机或内网受控环境使用。
+`/api/articles` 返回真实分页信息：`total`、`page`、`page_size`、`total_pages`、`has_next`、`has_prev`。前端支持上一页、下一页、每页 10/20/50、总数显示、搜索后回到第一页、跨页保留已选记录和清空已选择。
+
+`/api/extract` 创建后台 job 并返回 `job_id`、`status_url` 和 `result_page`。前端会自动跳转到 `/web/result.html?job_id=...`，结果页轮询 job 状态，成功后调用 preview API 预览 `结果数据` sheet 前 100 行，并提供下载按钮。下载接口只允许下载 `outputs/web/` 下由系统生成的 xlsx 文件，并防止路径穿越。当前页面没有登录权限系统，仅建议在本机或内网受控环境使用。
 
 ### 综合验收
 
@@ -483,6 +487,34 @@ IMAGE_BASE_URL=https://example.com
 ### PaddleOCR 安装失败怎么办？
 
 先用 `--no-ocr` 跑通主流程。后续再按本机 Python、CUDA/CPU 环境安装 PaddleOCR 和 PaddlePaddle。代码中的 OCR 已封装在 `image_ocr.py`，后续可以替换成其他 OCR 服务。即使开启 OCR，程序首轮也不会 OCR，只有低置信度且图片风险较高时才会重跑。
+
+`/api/config/status` 会返回 `ocr_available`、`ocr_status_reason` 和 `ocr_engine`。如果 OCR 不可用，前端会默认勾选并禁用“跳过 OCR”，并提示 `OCR 不可用，图片表格可能无法抽取`。当文章存在图片、没有 HTML 表格且 OCR 不可用或失败时，采集日志和抽取评估会写入：
+
+```text
+图片表格未识别，抽取结果可能缺失保障责任、保额、保费、等待期、赔付比例等字段
+```
+
+如果本机 OCR 不可用，可以使用外部 OCR 文本 fallback：
+
+```powershell
+py main.py --config logs/real_db_20/db_config.runtime.yml --field-config config/field_mapping.yml --llm-config config/llm_config.yml --selected-ids "https://mp.weixin.qq.com/s/7meXk1OSTtr9-GTFxFX4HQ" --ocr-text-file local\ocr_text.txt --mode merge
+```
+
+也可以按 source id 或 URL 提供 JSON 映射：
+
+```json
+{
+  "https://mp.weixin.qq.com/s/7meXk1OSTtr9-GTFxFX4HQ": "外部 OCR 识别出的图片表格文本..."
+}
+```
+
+对应参数：
+
+```powershell
+py main.py --ocr-json-file local\ocr_text_by_source.json
+```
+
+外部 OCR 文本会进入 LLM v2 prompt，并在字段证据中标记 `source=external_ocr_text`。
 
 ### 大模型返回 JSON 解析失败怎么办？
 
@@ -523,7 +555,11 @@ API 错误统一返回 JSON，例如数据库未配置时 `/api/articles` 返回
 
 前端会先检查响应 `content-type`，后端即使返回非 JSON 文本也会显示友好错误，不再抛出 `Unexpected token 'I'... is not valid JSON`。文章表格使用 DOM API 和 `textContent` 渲染数据库字段，来源链接仅允许 `http://` 和 `https://`。
 
-当前 `/api/extract` 是同步模式，单次最多 50 条。生成时页面会禁用按钮并提示不要关闭页面；大批量建议使用 CLI，后续可升级为 job 队列。
+当前 `/api/extract` 已切换为轻量 job 模式，单次最多 50 条。页面生成后会跳转结果页，结果页展示 queued/running/success/failed 状态、Excel 预览和下载链接。
+
+`人员类型` 只保留人群身份或参保类别；`6-65周岁`、`18-70岁`、`出生满30天-65周岁` 等年龄范围会从 `人员类型` 清空并转入 `备注`。`区间` 只用于报销金额区间、费用区间或赔付金额区间，例如 `50000元-400000元`；年龄范围不会进入 `区间`。
+
+病种名称抽取增加免责条款过滤。出现在 `免责`、`责任免除`、`投保须知`、`健康告知`、`既往症`、`不能投保`、`除外责任` 等上下文中的疾病，不会作为保障病种写入 `病种名称`；只有 `病种名称`、`疾病名称`、`保障病种`、`纳入病种`、`病种范围` 等强上下文才会抽取。
 
 图片导入脚本默认只允许写入测试表：`image_import_articles`、`test_*`、`*_test`。如果确需写非测试表，必须显式传入：
 

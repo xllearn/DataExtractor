@@ -66,3 +66,37 @@ Manual API result:
 - `/api/extract`: success with one selected record and `no_llm=true`
 - `/api/download/...`: downloaded successfully; workbook contains 6 sheets
 - Bad config: `/api/articles?limit=1` returned `400 application/json` with `error_type=DatabaseNotConfigured`
+
+## 2026-07-01 Supplemental Pagination Job OCR Fix
+
+- Overall status: automated checks passed.
+- `/api/articles` now returns real pagination metadata: `total`, `limit`, `offset`, `page`, `page_size`, `total_pages`, `has_next`, `has_prev`.
+- `/api/extract` now creates a job and returns `job_id`, `status_url`, and `result_page`.
+- Added `/api/jobs/{job_id}` and `/api/jobs/{job_id}/preview`; preview returns only the `结果数据` sheet, first 100 rows, without local paths.
+- Frontend now has previous/next pagination, page-size selector, total count, cross-page selection, clear selection, job result redirect, and result-page preview.
+- `/api/config/status` now reports OCR availability and reason.
+- CLI supports external OCR fallback via `--ocr-text-file` and `--ocr-json-file`; field evidence marks `source=external_ocr_text`.
+- Image-table risk is explicitly reported when images exist, no HTML table is found, and OCR text is unavailable.
+- Disease names in exemption/health notice/cannot-insure contexts are filtered out.
+- Person type age ranges remain blocked by the dedicated quality tests.
+
+## 2026-07-01 Supplemental Verification
+
+| Check | Result |
+| --- | --- |
+| Focused OCR/pagination/job/frontend/disease tests | passed, 20 tests |
+| `py -m unittest discover -s tests -v` | passed, 107 tests |
+| `py -m pytest -q` | passed, 107 tests, 36 subtests, 1 deprecation warning |
+| project `compileall` with ignored-dir excludes | passed |
+
+Real sample verification:
+
+- Sample: `普惠门诊保·如意版2025 保障详情`, `https://mp.weixin.qq.com/s/7meXk1OSTtr9-GTFxFX4HQ`
+- No OCR run: passed; disease name, person type and interval stayed empty; collection log recorded OCR skipped and image-table risk.
+- External OCR text run: passed; extracted `补助限额=100000元`, `报销比例=80%`, `备注=投保年龄：6-65周岁`; person type and disease name stayed empty; field evidence included `source=external_ocr_text`.
+
+Real-config API smoke:
+
+- `/api/config/status`: passed, `database_configured=true`, `safe_to_query=true`, `ocr_available=false`
+- `/api/articles?limit=1&offset=0`: passed, `total=7584`
+- `/api/extract` job + `/api/jobs/{job_id}` + `/api/jobs/{job_id}/preview`: passed, job success, preview headers=26, preview rows=1

@@ -328,3 +328,57 @@ Select-String / grep 等价检查：password, api_key, token, secret, sk-, DATAB
 - 根目录 `.env` 与 `db_to_excel_extractor/.env` 均为 `.gitignore` 忽略文件，不提交真实数据库连接串或真实 LLM key。
 - `config/llm_config.yml` 仅使用 `${LLM_API_KEY}` 等占位。
 - 本轮提交前会再次执行敏感信息扫描；包含真实数据的 `logs/`、`outputs/` 不提交。
+
+## 15. 2026-07-01 OCR、分页和结果页补充
+
+### 15.1 本轮真实样本问题
+
+样本文章：`普惠门诊保·如意版2025 保障详情`，URL `https://mp.weixin.qq.com/s/7meXk1OSTtr9-GTFxFX4HQ`。此前结果显示图片数量为 2、OCR 触发但失败，导致图片型保障责任表未抽取；同时免责/健康告知中的疾病曾被误写入 `病种名称`。
+
+### 15.2 修复覆盖
+
+- OCR 状态统一通过 `get_ocr_status()` 输出，API、CLI 和采集日志复用。
+- OCR 不可用时，系统会在 status、前端和采集日志中明确提示，不再静默保留首轮结果。
+- 有图片、无 HTML 表格、无 OCR 文本时，抽取评估会写入图片表格未识别风险。
+- 支持 `--ocr-text-file` 和 `--ocr-json-file` 外部 OCR 文本 fallback，适合本机无法安装 PaddleOCR 时复测图片型表格。
+- 免责/健康告知/不能投保/除外责任中的疾病不再进入 `病种名称`。
+- `人员类型` 年龄范围清洗由 `tests/test_person_type_quality.py` 覆盖。
+
+### 15.3 当前自动化验证
+
+- 聚焦测试：20 tests OK，覆盖 OCR status、图片表格风险、外部 OCR 文本、分页、job、preview、结果页静态检查、人员类型年龄范围和免责病种过滤。
+- 全量 `unittest`：107 tests OK。
+
+### 15.4 待复测命令模板
+
+无外部 OCR 文本时：
+
+```powershell
+py main.py --config logs/real_db_20/db_config.runtime.yml --field-config config/field_mapping.yml --table-config config/table_mapping.yml --llm-config config/llm_config.yml --selected-ids "https://mp.weixin.qq.com/s/7meXk1OSTtr9-GTFxFX4HQ" --mode merge --limit 1 --output-dir outputs/real_db_20/ocr_status_sample --log-dir logs/real_db_20/ocr_status_sample --save-intermediate --no-ocr
+```
+
+提供外部 OCR 文本时：
+
+```powershell
+py main.py --config logs/real_db_20/db_config.runtime.yml --field-config config/field_mapping.yml --table-config config/table_mapping.yml --llm-config config/llm_config.yml --selected-ids "https://mp.weixin.qq.com/s/7meXk1OSTtr9-GTFxFX4HQ" --mode merge --limit 1 --output-dir outputs/real_db_20/external_ocr_sample --log-dir logs/real_db_20/external_ocr_sample --save-intermediate --ocr-text-file local\ocr_text.txt
+```
+
+验收重点：`病种名称` 不应填入免责条款疾病，`人员类型` 不应出现 `6-65周岁`，图片表格未识别风险应写入采集日志和抽取评估；提供外部 OCR 文本后，字段证据应包含 `source=external_ocr_text`。
+
+### 15.5 本轮复测结果
+
+无 OCR 复测：
+
+- 命令：使用上述 URL、`--mode merge`、`--limit 1`、`--save-intermediate`、`--no-ocr`。
+- 运行结果：通过，退出码 0，真实数据库读取 1 条，真实 LLM 调用成功，生成 Excel。
+- 输出目录：`outputs/real_db_20/ocr_status_sample/`。
+- 结果检查：`病种名称`、`人员类型`、`区间` 均为空；未把免责条款疾病写入 `病种名称`，未把 `6-65周岁` 写入 `人员类型`。
+- 采集日志：`ocr_available=false`、`ocr_triggered=true`、`ocr_skipped_reason=用户选择跳过 OCR`，`review_reason` 包含图片表格未识别风险。
+
+外部 OCR 文本复测：
+
+- 命令：同一 URL，提供包含 `投保年龄：6-65周岁`、`意外门诊急诊费用补偿：100000`、`免赔额100元`、`给付比例80%` 的 `--ocr-text-file`。
+- 运行结果：通过，退出码 0，真实数据库读取 1 条，真实 LLM 调用成功，生成 Excel。
+- 输出目录：`outputs/real_db_20/external_ocr_sample/`。
+- 结果检查：`补助限额=100000元`、`报销比例=80%`、`备注=投保年龄：6-65周岁`；`人员类型` 和 `病种名称` 为空。
+- 字段证据：包含 `source=external_ocr_text`。

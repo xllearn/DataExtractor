@@ -12,6 +12,7 @@ from utils import ensure_dir
 
 SUPPORTED_IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
 _OCR_ENGINE = None
+OCR_UNAVAILABLE_REASON = "未安装 paddleocr/paddlepaddle 或 OCR 初始化失败"
 
 
 @dataclass
@@ -19,6 +20,15 @@ class OcrSummary:
     text: str
     success_count: int
     failure_count: int
+
+
+def get_ocr_status() -> dict:
+    try:
+        from paddleocr import PaddleOCR  # noqa: F401
+
+        return {"available": True, "reason": "OCR 可用", "engine": "paddleocr"}
+    except Exception:
+        return {"available": False, "reason": OCR_UNAVAILABLE_REASON, "engine": "none"}
 
 
 def process_image_ocr(

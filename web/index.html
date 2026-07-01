@@ -27,7 +27,23 @@
       <section class="status">
         <span id="selectionStatus">已选择 0 条</span>
         <span id="jobStatus"></span>
-        <a id="downloadLink" href="#" hidden>下载 Excel</a>
+        <span id="ocrWarning" class="warning"></span>
+        <button id="clearSelectionBtn" type="button">清空已选择</button>
+      </section>
+
+      <section class="pagination" aria-label="分页">
+        <button id="prevPageBtn" type="button">上一页</button>
+        <span id="pageStatus">第 0 / 0 页</span>
+        <button id="nextPageBtn" type="button">下一页</button>
+        <label>
+          每页
+          <select id="pageSizeSelect">
+            <option value="10">10</option>
+            <option value="20" selected>20</option>
+            <option value="50">50</option>
+          </select>
+        </label>
+        <span id="totalStatus">总计 0 条</span>
       </section>
 
       <table>

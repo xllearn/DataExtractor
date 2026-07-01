@@ -57,5 +57,58 @@
       "test_table_protection": true,
       "force_production_table_required": true
     }
+  },
+  "supplemental_2026_07_01_pagination_job_ocr": {
+    "overall_passed": true,
+    "commands": {
+      "focused": {"passed": true, "tests": 20},
+      "unittest": {"passed": true, "tests": 107},
+      "pytest": {"passed": true, "tests": 107, "subtests": 36, "warnings": 1},
+      "compileall_project": {"passed": true}
+    },
+    "pagination": {
+      "api_returns_total_and_page_metadata": true,
+      "frontend_previous_next_page_size_total": true,
+      "cross_page_selection": true
+    },
+    "job_result_preview": {
+      "extract_returns_job_id": true,
+      "job_status_api": true,
+      "preview_api": true,
+      "result_page": true
+    },
+    "ocr_diagnostics": {
+      "status_reports_availability": true,
+      "image_table_risk_message": true,
+      "external_ocr_text_file": true,
+      "external_ocr_json_file": true,
+      "field_evidence_source_external_ocr_text": true
+    },
+    "quality_filters": {
+      "person_type_age_range_blocked": true,
+      "disease_exemption_context_filtered": true
+    },
+    "real_sample": {
+      "source_url": "https://mp.weixin.qq.com/s/7meXk1OSTtr9-GTFxFX4HQ",
+      "no_ocr_run_passed": true,
+      "no_ocr_image_table_risk_logged": true,
+      "external_ocr_run_passed": true,
+      "external_ocr_field_evidence": true,
+      "person_type_age_range_blocked": true,
+      "disease_exemption_context_filtered": true,
+      "observed_limit": "100000元",
+      "observed_ratio": "80%",
+      "observed_note": "投保年龄：6-65周岁"
+    },
+    "real_config_api_smoke": {
+      "passed": true,
+      "database_configured": true,
+      "safe_to_query": true,
+      "ocr_available": false,
+      "articles_total": 7584,
+      "job_status": "success",
+      "preview_headers": 26,
+      "preview_rows": 1
+    }
   }
 }
