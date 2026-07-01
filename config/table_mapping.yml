@@ -30,6 +30,12 @@ header_aliases:
     - 待遇类型
     - 保障责任
     - 责任类型
+  区间:
+    - 报销区间
+    - 费用区间
+    - 医疗费用区间
+    - 赔付区间
+    - 金额区间
 
 defaults:
   source: "table_rule"

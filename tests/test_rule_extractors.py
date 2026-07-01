@@ -89,6 +89,27 @@ class TableExtractorTests(unittest.TestCase):
         self.assertEqual(result.records[0]["区间"], "0-1000元")
         self.assertEqual(result.records[1]["区间"], "1000元以上")
 
+    def test_table_extractor_keeps_age_ranges_out_of_person_type_and_interval(self):
+        from table_extractor import extract_tables_from_html
+
+        html = """
+        <table>
+          <tr><th>人员类型</th><th>区间</th><th>支付比例</th></tr>
+          <tr><td>6-65周岁</td><td>18-60周岁</td><td>80%</td></tr>
+          <tr><td>参保职工</td><td>50000元-400000元</td><td>90%</td></tr>
+        </table>
+        """
+
+        result = extract_tables_from_html(html)
+
+        self.assertEqual(len(result.records), 2)
+        self.assertEqual(result.records[0]["人员类型"], "")
+        self.assertEqual(result.records[0]["区间"], "")
+        self.assertIn("6-65周岁", result.records[0]["备注"])
+        self.assertIn("18-60周岁", result.records[0]["备注"])
+        self.assertEqual(result.records[1]["人员类型"], "参保职工")
+        self.assertEqual(result.records[1]["区间"], "50000元-400000元")
+
 
 class TextRuleExtractorTests(unittest.TestCase):
     def test_extracts_common_key_value_patterns(self):
@@ -123,6 +144,24 @@ class TextRuleExtractorTests(unittest.TestCase):
         result = extract_key_value_records("给付比例为66%", field_mapping=mapping)
 
         self.assertEqual(result.records[0]["报销比例"], "66%")
+
+    def test_age_range_person_alias_redirects_to_note_not_person_type_or_interval(self):
+        from rule_extractor import extract_key_value_records
+
+        result = extract_key_value_records("适用人群：6-65周岁\n报销比例：80%")
+
+        self.assertEqual(result.records[0]["人员类型"], "")
+        self.assertEqual(result.records[0]["区间"], "")
+        self.assertEqual(result.records[0]["报销比例"], "80%")
+        self.assertIn("6-65周岁", result.records[0]["备注"])
+
+    def test_reimbursement_amount_interval_can_fill_interval(self):
+        from rule_extractor import extract_key_value_records
+
+        result = extract_key_value_records("报销区间：50000元-400000元\n报销比例：80%")
+
+        self.assertEqual(result.records[0]["区间"], "50000元-400000元")
+        self.assertEqual(result.records[0]["报销比例"], "80%")
 
     def test_rule_extraction_failure_is_captured(self):
         from rule_extractor import extract_key_value_records

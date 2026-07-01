@@ -105,6 +105,16 @@ class LlmV2ParsingTests(unittest.TestCase):
         self.assertEqual(deductible["confidence"], 0.6)
         self.assertEqual(deductible["evidence"], "")
 
+    def test_prompt_constrains_person_type_and_interval_semantics(self):
+        from prompts_v2 import build_extract_prompt_v2
+
+        prompt = build_extract_prompt_v2({}, "", "", "", "20260701")
+
+        self.assertIn("不要把年龄范围填入人员类型", prompt)
+        self.assertIn("不要把年龄范围填入区间", prompt)
+        self.assertIn("区间只用于报销金额区间", prompt)
+        self.assertIn("50000元-400000元", prompt)
+
 
 if __name__ == "__main__":
     unittest.main()

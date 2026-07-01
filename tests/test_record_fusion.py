@@ -112,6 +112,47 @@ class RecordFusionTests(unittest.TestCase):
         self.assertTrue(result.need_manual_review)
         self.assertIn("数量不一致", result.review_reason)
 
+    def test_age_ranges_are_cleared_from_person_type_and_interval(self):
+        from field_mapping import load_field_mapping
+        from record_fusion import fuse_record_sources
+
+        result = fuse_record_sources(
+            record={},
+            table_records=[],
+            text_rule_records=[{"人员类型": "6"}],
+            llm_records=[{"人员类型": "6-65周岁", "区间": "18-60周岁"}],
+            table_evidence=[],
+            text_rule_evidence=[],
+            llm_evidence=[],
+            field_mapping=load_field_mapping(None),
+        )
+
+        row = result.records[0]
+        self.assertEqual(row["人员类型"], "")
+        self.assertEqual(row["区间"], "")
+        self.assertIn("6-65周岁", row["备注"])
+        self.assertIn("18-60周岁", row["备注"])
+        self.assertTrue(result.need_manual_review)
+        self.assertTrue(any(item["chosen_source"] == "cleaner" for item in result.conflict_evidence))
+
+    def test_valid_person_type_wins_over_llm_age_range(self):
+        from field_mapping import load_field_mapping
+        from record_fusion import fuse_record_sources
+
+        result = fuse_record_sources(
+            record={},
+            table_records=[],
+            text_rule_records=[{"人员类型": "参保职工"}],
+            llm_records=[{"人员类型": "6-65周岁"}],
+            table_evidence=[],
+            text_rule_evidence=[],
+            llm_evidence=[],
+            field_mapping=load_field_mapping(None),
+        )
+
+        self.assertEqual(result.records[0]["人员类型"], "参保职工")
+        self.assertIn("6-65周岁", result.records[0]["备注"])
+
 
 if __name__ == "__main__":
     unittest.main()

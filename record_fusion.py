@@ -2,6 +2,17 @@ from typing import Any, Dict, List, Sequence
 
 from extraction_types import FusionResult
 from field_mapping import FieldMapping, apply_direct_fields, normalize_record_fields
+from field_cleaners import (
+    INTERVAL_FIELD,
+    NOTE_FIELD,
+    PERSON_TYPE_FIELD,
+    age_range_note,
+    append_note,
+    extract_reimbursement_interval,
+    invalid_person_type_note,
+    is_age_range,
+    normalize_person_type,
+)
 from rule_extractor import is_valid_disease_name, normalize_disease_name
 
 
@@ -101,6 +112,113 @@ def _conflict(
         "value_b": value_b,
         "chosen_source": chosen_source,
     }
+
+
+def _append_redirect_note(chosen: Dict[str, Any], note: str) -> None:
+    if note:
+        chosen[NOTE_FIELD] = append_note(chosen.get(NOTE_FIELD), note)
+
+
+def _clean_field_value(
+    record: Dict[str, Any],
+    row_index: int,
+    field: str,
+    source: str,
+    value: Any,
+    chosen: Dict[str, Any],
+) -> tuple[bool, Any, List[Dict[str, Any]]]:
+    conflicts: List[Dict[str, Any]] = []
+    if field == PERSON_TYPE_FIELD:
+        normalized = normalize_person_type(value)
+        if normalized:
+            return True, normalized, conflicts
+        note = invalid_person_type_note(value)
+        _append_redirect_note(chosen, note)
+        conflicts.append(
+            _conflict(
+                record,
+                row_index,
+                field,
+                source,
+                value,
+                "cleaner",
+                "",
+                "cleaner",
+                "",
+                "人员类型特殊规则：年龄范围或纯数字不是人员类型，已转入备注或清空",
+            )
+        )
+        return False, "", conflicts
+    if field == INTERVAL_FIELD:
+        if is_age_range(value):
+            note = age_range_note(value)
+            _append_redirect_note(chosen, note)
+            conflicts.append(
+                _conflict(
+                    record,
+                    row_index,
+                    field,
+                    source,
+                    value,
+                    "cleaner",
+                    "",
+                    "cleaner",
+                    "",
+                    "区间特殊规则：区间只用于报销金额区间，年龄范围已转入备注",
+                )
+            )
+            return False, "", conflicts
+        return True, extract_reimbursement_interval(value) or value, conflicts
+    return True, value, conflicts
+
+
+def _sanitize_final_row(
+    record: Dict[str, Any],
+    row: Dict[str, Any],
+    field_mapping: FieldMapping,
+    row_index: int,
+) -> tuple[Dict[str, Any], List[Dict[str, Any]]]:
+    cleaned = dict(row or {})
+    conflicts: List[Dict[str, Any]] = []
+    person_value = cleaned.get(PERSON_TYPE_FIELD)
+    if _meaningful(person_value) and not normalize_person_type(person_value):
+        note = invalid_person_type_note(person_value)
+        cleaned[NOTE_FIELD] = append_note(cleaned.get(NOTE_FIELD), note)
+        cleaned[PERSON_TYPE_FIELD] = ""
+        conflicts.append(
+            _conflict(
+                record,
+                row_index,
+                PERSON_TYPE_FIELD,
+                "final_row",
+                person_value,
+                "cleaner",
+                "",
+                "cleaner",
+                "",
+                "人员类型特殊规则：最终行中的年龄范围或纯数字已清空",
+            )
+        )
+    interval_value = cleaned.get(INTERVAL_FIELD)
+    if _meaningful(interval_value) and is_age_range(interval_value):
+        note = age_range_note(interval_value)
+        cleaned[NOTE_FIELD] = append_note(cleaned.get(NOTE_FIELD), note)
+        cleaned[INTERVAL_FIELD] = ""
+        conflicts.append(
+            _conflict(
+                record,
+                row_index,
+                INTERVAL_FIELD,
+                "final_row",
+                interval_value,
+                "cleaner",
+                "",
+                "cleaner",
+                "",
+                "区间特殊规则：最终行中的年龄范围已转入备注",
+            )
+        )
+    return normalize_record_fields(cleaned, field_mapping), conflicts
 
 
 def _choose_disease_name(
@@ -230,6 +348,11 @@ def _merge_row(
                 continue
             if field == DISEASE_FIELD:
                 continue
+            keep_value, cleaned_value, clean_conflicts = _clean_field_value(record, row_index, field, source, value, chosen)
+            conflicts.extend(clean_conflicts)
+            if not keep_value:
+                continue
+            value = cleaned_value
             if field not in chosen:
                 chosen[field] = value
                 chosen_source[field] = source
@@ -260,7 +383,10 @@ def _merge_row(
     conflicts.extend(disease_conflicts)
 
     normalized_chosen = normalize_record_fields(chosen, field_mapping)
-    return apply_direct_fields(normalized_chosen, record, field_mapping), conflicts
+    final_row = apply_direct_fields(normalized_chosen, record, field_mapping)
+    final_row, final_conflicts = _sanitize_final_row(record, final_row, field_mapping, row_index)
+    conflicts.extend(final_conflicts)
+    return final_row, conflicts
 
 
 def fuse_record_sources(

@@ -9,6 +9,17 @@ from bs4 import BeautifulSoup
 from config import PROJECT_ROOT
 from extraction_types import RuleExtractionResult
 from field_mapping import ALIASES, FieldMapping, load_field_mapping, normalize_record_fields
+from field_cleaners import (
+    INTERVAL_FIELD,
+    NOTE_FIELD,
+    PERSON_TYPE_FIELD,
+    age_range_note,
+    append_note,
+    extract_reimbursement_interval,
+    invalid_person_type_note,
+    is_age_range,
+    normalize_person_type,
+)
 
 
 DEDUP_FIELDS = [
@@ -161,6 +172,44 @@ def _extract_from_rows(
                 continue
             target = raw_header if raw_header in field_mapping.headers else alias_to_header.get(raw_header)
             if target and target in field_mapping.headers:
+                if target == PERSON_TYPE_FIELD:
+                    normalized_person_type = normalize_person_type(value)
+                    if not normalized_person_type:
+                        note = invalid_person_type_note(value)
+                        if note:
+                            extra_notes.append(note)
+                            result.field_evidence.append(
+                                _evidence(
+                                    source_id,
+                                    info_id,
+                                    NOTE_FIELD,
+                                    note,
+                                    f"表格第{row_number}行：{raw_header}={value}",
+                                    table_mapping.confidence,
+                                    "table",
+                                    "age_range_redirect_to_note",
+                                )
+                            )
+                        continue
+                    value = normalized_person_type
+                elif target == INTERVAL_FIELD:
+                    if is_age_range(value):
+                        note = age_range_note(value)
+                        extra_notes.append(note)
+                        result.field_evidence.append(
+                            _evidence(
+                                source_id,
+                                info_id,
+                                NOTE_FIELD,
+                                note,
+                                f"表格第{row_number}行：{raw_header}={value}",
+                                table_mapping.confidence,
+                                "table",
+                                "age_range_redirect_to_note",
+                            )
+                        )
+                        continue
+                    value = extract_reimbursement_interval(value) or value
                 record[target] = value
                 result.field_evidence.append(
                     _evidence(
@@ -177,7 +226,8 @@ def _extract_from_rows(
             else:
                 extra_notes.append(f"{raw_header}={value}")
         if extra_notes:
-            record["备注"] = "；".join(extra_notes)
+            for note in extra_notes:
+                record[NOTE_FIELD] = append_note(record.get(NOTE_FIELD), note)
         if record:
             result.records.append(normalize_record_fields(record, field_mapping))
     return result

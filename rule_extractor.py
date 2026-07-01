@@ -3,6 +3,16 @@ from typing import Any, Dict, List, Tuple
 
 from extraction_types import RuleExtractionResult
 from field_mapping import FieldMapping, load_field_mapping, normalize_record_fields
+from field_cleaners import (
+    INTERVAL_FIELD,
+    NOTE_FIELD,
+    PERSON_TYPE_FIELD,
+    age_range_note,
+    append_note,
+    extract_reimbursement_interval,
+    invalid_person_type_note,
+    normalize_person_type,
+)
 
 
 FIELD_ALIASES: Dict[str, List[str]] = {
@@ -10,6 +20,8 @@ FIELD_ALIASES: Dict[str, List[str]] = {
     "起付标准": ["起付标准", "起付线", "起付金额"],
     "补助限额": ["年度最高支付限额", "最高支付限额", "封顶线", "年度限额", "补助限额"],
     "病种名称": ["病种名称", "疾病名称", "特定病种", "保障病种", "纳入病种", "病种范围"],
+    "人员类型": ["人员类型", "适用人群", "参保人员", "参保人群"],
+    "区间": ["区间", "报销区间", "费用区间", "医疗费用区间", "赔付区间", "金额区间"],
 }
 
 VALUE_PATTERN = r"([0-9]+(?:\.[0-9]+)?\s*(?:%|％|元|万元|万|亿元)?)"
@@ -176,17 +188,43 @@ def _field_aliases(field_mapping: FieldMapping) -> Dict[str, List[str]]:
     return aliases
 
 
-def _find_field_values(text: str, field_mapping: FieldMapping) -> List[Tuple[str, str, str]]:
-    hits: List[Tuple[str, str, str]] = []
+def _find_field_values(text: str, field_mapping: FieldMapping) -> List[Tuple[str, str, str, str]]:
+    hits: List[Tuple[str, str, str, str]] = []
     for field, aliases in _field_aliases(field_mapping).items():
         if field == DISEASE_FIELD:
             continue
         for alias in aliases:
+            if field == PERSON_TYPE_FIELD:
+                pattern = re.compile(rf"({re.escape(alias)}\s*(?:[:：为是])\s*([^\n。；;，,、|]+))")
+                for match in pattern.finditer(text):
+                    evidence = match.group(1).strip()
+                    value = match.group(2).strip()
+                    person_type = normalize_person_type(value)
+                    if person_type:
+                        hits.append((field, person_type, evidence, "person_type_text_pattern"))
+                        continue
+                    note = invalid_person_type_note(value)
+                    if note:
+                        hits.append((NOTE_FIELD, note, evidence, "age_range_redirect_to_note"))
+                continue
+            if field == INTERVAL_FIELD:
+                pattern = re.compile(rf"({re.escape(alias)}\s*(?:[:：为是])\s*([^\n。；;，,、|]+))")
+                for match in pattern.finditer(text):
+                    evidence = match.group(1).strip()
+                    value = match.group(2).strip()
+                    interval = extract_reimbursement_interval(value)
+                    if interval:
+                        hits.append((field, interval, evidence, "reimbursement_interval_pattern"))
+                        continue
+                    note = age_range_note(value)
+                    if note:
+                        hits.append((NOTE_FIELD, note, evidence, "age_range_redirect_to_note"))
+                continue
             pattern = re.compile(rf"({re.escape(alias)}\s*(?:[:：为是]|不超过|不高于)?\s*{VALUE_PATTERN})")
             for match in pattern.finditer(text):
                 evidence = match.group(1).strip()
                 value = match.group(2).strip()
-                hits.append((field, value, evidence))
+                hits.append((field, value, evidence, "kv_pattern"))
     return hits
 
 
@@ -242,10 +280,13 @@ def extract_key_value_records(
         field_mapping = field_mapping or load_field_mapping(None)
         source_text = str(text or "")
         record: Dict[str, Any] = {}
-        for field, value, evidence_text in _find_field_values(source_text, field_mapping):
-            if field not in record:
+        for field, value, evidence_text, rule_name in _find_field_values(source_text, field_mapping):
+            if field == NOTE_FIELD:
+                record[field] = append_note(record.get(field), value)
+                result.field_evidence.append(_evidence(source_id, info_id, field, value, evidence_text, 0.8, rule_name))
+            elif field not in record:
                 record[field] = value
-                result.field_evidence.append(_evidence(source_id, info_id, field, value, evidence_text, 0.8, "kv_pattern"))
+                result.field_evidence.append(_evidence(source_id, info_id, field, value, evidence_text, 0.8, rule_name))
 
         for field, value, evidence_text, rule_name, confidence in _find_disease_names(source_text, field_mapping):
             if field not in record:
