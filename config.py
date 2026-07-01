@@ -50,6 +50,11 @@ class Settings:
     default_limit: int
     default_offset: int
     project_root: Path = PROJECT_ROOT
+    llm_timeout: float = 60.0
+    llm_max_retries: int = 2
+    llm_retry_backoff: float = 1.0
+    image_download_timeout: float = 20.0
+    image_max_bytes: int = 10 * 1024 * 1024
 
 
 def str_to_bool(value: Optional[str], default: bool = False) -> bool:
@@ -80,6 +85,11 @@ def load_settings(env_path: Optional[Path] = None) -> Settings:
         default_mode=os.getenv("DEFAULT_MODE", "single"),
         default_limit=int(os.getenv("DEFAULT_LIMIT", "1")),
         default_offset=int(os.getenv("DEFAULT_OFFSET", "0")),
+        llm_timeout=float(os.getenv("LLM_TIMEOUT", "60")),
+        llm_max_retries=int(os.getenv("LLM_MAX_RETRIES", "2")),
+        llm_retry_backoff=float(os.getenv("LLM_RETRY_BACKOFF", "1")),
+        image_download_timeout=float(os.getenv("IMAGE_DOWNLOAD_TIMEOUT", "20")),
+        image_max_bytes=int(os.getenv("IMAGE_MAX_BYTES", str(10 * 1024 * 1024))),
     )
 
 
@@ -102,6 +112,9 @@ def apply_llm_config(settings: Settings, path: str | Path | None) -> Settings:
         llm_api_key=str(payload.get("api_key") or settings.llm_api_key),
         llm_base_url=str(payload.get("base_url") or settings.llm_base_url),
         llm_model=str(payload.get("model") or settings.llm_model),
+        llm_timeout=float(payload.get("timeout_seconds") or payload.get("timeout") or settings.llm_timeout),
+        llm_max_retries=int(payload.get("max_retries") if payload.get("max_retries") not in (None, "") else settings.llm_max_retries),
+        llm_retry_backoff=float(payload.get("retry_backoff") if payload.get("retry_backoff") not in (None, "") else settings.llm_retry_backoff),
     )
 
 

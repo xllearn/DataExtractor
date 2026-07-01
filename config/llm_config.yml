@@ -3,6 +3,9 @@ api_key: "${LLM_API_KEY}"
 base_url: "${LLM_BASE_URL}"
 model: "${LLM_MODEL}"
 format: "v2"
+timeout_seconds: "${LLM_TIMEOUT}"
+max_retries: "${LLM_MAX_RETRIES}"
+retry_backoff: "${LLM_RETRY_BACKOFF}"
 
 vision:
   enabled: "${VISION_LLM_ENABLED}"
