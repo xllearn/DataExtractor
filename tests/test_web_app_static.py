@@ -85,6 +85,34 @@ class WebAppStaticTests(unittest.TestCase):
         self.assertIn('jobId.startsWith("job_")', source)
         self.assertIn("error.status === 404", source)
 
+    def test_frontend_uses_workbench_layout_components(self):
+        index_source = (PROJECT_ROOT / "web" / "index.html").read_text(encoding="utf-8")
+        style_source = (PROJECT_ROOT / "web" / "style.css").read_text(encoding="utf-8")
+
+        self.assertIn('class="app-shell"', index_source)
+        self.assertIn('class="status-chip', index_source)
+        self.assertIn('class="command-panel"', index_source)
+        self.assertIn('class="ocr-panel"', index_source)
+        self.assertIn("<details", index_source)
+        self.assertIn('class="selection-panel"', index_source)
+        self.assertIn('class="table-card"', index_source)
+        self.assertIn('class="pagination-bar"', index_source)
+        self.assertIn(".status-chip", style_source)
+        self.assertIn(".command-panel", style_source)
+        self.assertIn(".table-card", style_source)
+
+    def test_result_preview_keeps_headers_readable(self):
+        result_html_source = (PROJECT_ROOT / "web" / "result.html").read_text(encoding="utf-8")
+        style_source = (PROJECT_ROOT / "web" / "style.css").read_text(encoding="utf-8")
+
+        self.assertIn('class="result-summary"', result_html_source)
+        self.assertIn('id="previewMeta"', result_html_source)
+        self.assertIn('class="preview-table"', result_html_source)
+        self.assertIn(".preview-table", style_source)
+        self.assertIn("white-space: nowrap", style_source)
+        self.assertIn("position: sticky", style_source)
+        self.assertIn("min-width:", style_source)
+
 
 if __name__ == "__main__":
     unittest.main()

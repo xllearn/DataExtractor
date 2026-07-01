@@ -3,6 +3,13 @@ const WEB_APP_VERSION = "20260701_image_table";
 
 const elements = {
   configStatus: document.querySelector("#configStatus"),
+  databaseChip: document.querySelector("#databaseChip"),
+  llmChip: document.querySelector("#llmChip"),
+  ocrChip: document.querySelector("#ocrChip"),
+  databaseStatusText: document.querySelector("#databaseStatusText"),
+  llmStatusText: document.querySelector("#llmStatusText"),
+  ocrStatusText: document.querySelector("#ocrStatusText"),
+  versionStatusText: document.querySelector("#versionStatusText"),
   refreshBtn: document.querySelector("#refreshBtn"),
   keywordInput: document.querySelector("#keywordInput"),
   searchBtn: document.querySelector("#searchBtn"),
@@ -37,6 +44,13 @@ const state = {
 function setStatus(text, isError = false) {
   elements.jobStatus.textContent = text || "";
   elements.jobStatus.className = isError ? "error" : "";
+}
+
+function setStatusChip(chip, textNode, enabled, readyText = "已配置", missingText = "未配置") {
+  if (!chip || !textNode) return;
+  textNode.textContent = enabled ? readyText : missingText;
+  chip.classList.remove("status-chip-pending", "status-chip-ok", "status-chip-warn");
+  chip.classList.add(enabled ? "status-chip-ok" : "status-chip-warn");
 }
 
 function updateSelection() {
@@ -110,6 +124,7 @@ function appendSourceCell(row, value) {
     link.href = value;
     link.target = "_blank";
     link.rel = "noreferrer";
+    link.className = "source-link";
     link.textContent = "打开";
     cell.appendChild(link);
   } else {
@@ -160,9 +175,12 @@ async function loadStatus() {
   const databaseLabel = status.database_configured ? "已配置" : "未配置";
   const llmLabel = status.llm_configured ? "已配置" : "未配置";
   const ocrLabel = status.ocr_available ? "可用" : "不可用";
-  const pathLabel = status.config_path ? `，配置：${status.config_path}` : "";
   const versionLabel = status.web_app_version || WEB_APP_VERSION;
-  elements.configStatus.textContent = `数据库：${databaseLabel}，LLM：${llmLabel}，OCR：${ocrLabel}${pathLabel}，版本：${versionLabel}`;
+  setStatusChip(elements.databaseChip, elements.databaseStatusText, status.database_configured, databaseLabel, databaseLabel);
+  setStatusChip(elements.llmChip, elements.llmStatusText, status.llm_configured, llmLabel, llmLabel);
+  setStatusChip(elements.ocrChip, elements.ocrStatusText, status.ocr_available, ocrLabel, ocrLabel);
+  elements.configStatus.textContent = status.config_path || "未指定";
+  if (elements.versionStatusText) elements.versionStatusText.textContent = versionLabel;
 
   if (!state.ocrAvailable) {
     elements.noOcrInput.checked = true;

@@ -4,6 +4,7 @@ const jobId = params.get("job_id") || "";
 const elements = {
   jobIdText: document.querySelector("#jobIdText"),
   statusText: document.querySelector("#statusText"),
+  previewMeta: document.querySelector("#previewMeta"),
   riskText: document.querySelector("#riskText"),
   downloadBtn: document.querySelector("#downloadBtn"),
   backBtn: document.querySelector("#backBtn"),
@@ -48,15 +49,19 @@ function renderPreview(payload) {
   elements.previewHead.replaceChildren();
   elements.previewBody.replaceChildren();
 
+  const headers = payload.headers || [];
+  const rows = payload.rows || [];
+  setText(elements.previewMeta, `结果数据 · ${headers.length} 列 · ${rows.length} 行预览`);
+
   const headRow = document.createElement("tr");
-  for (const header of payload.headers || []) {
+  for (const header of headers) {
     const cell = document.createElement("th");
     cell.textContent = header || "";
     headRow.appendChild(cell);
   }
   elements.previewHead.appendChild(headRow);
 
-  for (const row of payload.rows || []) {
+  for (const row of rows) {
     const tr = document.createElement("tr");
     for (const value of row) {
       const cell = document.createElement("td");
@@ -87,6 +92,7 @@ async function pollJob() {
   try {
     const job = await fetchJson(`/api/jobs/${encodeURIComponent(jobId)}`);
     setText(elements.statusText, job.message || job.status);
+    elements.statusText.className = "result-badge";
     if (!job.ocr_available) {
       setText(elements.riskText, "本次未使用 OCR，图片表格内容可能缺失。");
     }
@@ -94,6 +100,7 @@ async function pollJob() {
       setText(elements.riskText, "使用了外部 OCR 文本");
     }
     if (job.status === "success") {
+      elements.statusText.className = "result-badge result-badge-success";
       if (elements.downloadBtn) {
         elements.downloadBtn.href = job.download_url;
         setHidden(elements.downloadBtn, false);
@@ -103,7 +110,7 @@ async function pollJob() {
     }
     if (job.status === "failed") {
       setText(elements.statusText, job.error || "生成失败");
-      elements.statusText.className = "error";
+      elements.statusText.className = "result-badge error";
       return;
     }
     window.setTimeout(pollJob, 1000);
@@ -113,7 +120,7 @@ async function pollJob() {
     } else {
       setText(elements.statusText, error.message);
     }
-    elements.statusText.className = "error";
+    elements.statusText.className = "result-badge error";
   }
 }
 

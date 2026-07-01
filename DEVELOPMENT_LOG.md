@@ -530,3 +530,49 @@ Fix DB articles whose benefit tables are stored in images so they no longer coll
 - No API keys, `.env`, generated Excel files, downloaded article images, desktop reports, `logs/`, or `outputs/` are committed.
 - The pre-existing untracked `Q57D2088.tmp` remains untracked and is not part of this task.
 - Known limitation: PaddleOCR may still miss repeated amounts in merged image-table cells, but the target DB sample no longer collapses to one row and extracted key benefit amounts/deductibles/ratios match the source image evidence.
+
+## 2026-07-01 Round 14
+
+### Goal
+
+Polish the lightweight Web frontend after reviewing the current list page and result page screenshots, using a Canva visual draft as direction, then push the frontend refresh.
+
+### Completed
+
+- Created a Canva visual draft for the two core screens: article list workbench and extraction result preview.
+- Reworked `web/index.html` into a quieter data workbench layout:
+  - top title and subtitle,
+  - compact database/LLM/OCR/config/version status chips,
+  - command panel for search, OCR/LLM options and Excel generation,
+  - collapsed external OCR text panel,
+  - selected-record status bar,
+  - framed article table with sticky header styling.
+- Reworked `web/result.html` into a result-detail layout:
+  - job id header,
+  - result status badge,
+  - preview metadata chip,
+  - download action,
+  - dedicated scrollable preview table.
+- Rebuilt `web/style.css` around a restrained workbench visual system: light background, white panels, clear status colors, blue primary actions, readable table spacing and responsive fallbacks.
+- Updated `web/app.js` to populate the new status chips and style safe source links without changing safe DOM rendering.
+- Updated `web/result.js` to show preview column/row metadata and success/error badge classes while keeping job polling and preview loading unchanged.
+- Added static frontend regression checks for the new workbench components and result table readability constraints.
+
+### Verification
+
+- TDD red/green for the new static layout checks:
+  - New tests first failed against the old markup.
+  - After implementation, the focused tests passed.
+- Frontend static regression: `py -m unittest tests.test_web_app_static -v`, 9 tests OK.
+- Local browser verification on a temporary API server at `http://127.0.0.1:8016/`:
+  - Home page rendered the new workbench layout with no browser error logs.
+  - Default unconfigured database state still disabled query/generate actions as expected.
+  - Result page unknown-job state rendered as an error badge with no browser error logs.
+  - A temporary success job metadata/workbook verified the result preview path: status `生成成功`, download button visible, preview metadata populated, horizontal table scroll active, and preview table headers computed as `white-space: nowrap`.
+- Temporary verification server, logs, metadata and workbook were removed after checking.
+
+### Notes
+
+- This round does not change backend extraction behavior or API contracts.
+- No `.env`, `logs/`, `outputs/`, generated Excel files, database credentials, API keys or browser screenshots are committed.
+- The pre-existing untracked `Q57D2088.tmp` remains untracked and is not part of this task.

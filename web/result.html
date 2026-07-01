@@ -7,24 +7,27 @@
     <link rel="stylesheet" href="/web/style.css" />
   </head>
   <body>
-    <main class="shell">
-      <header class="toolbar">
-        <div>
+    <main class="app-shell result-shell">
+      <header class="app-header">
+        <div class="app-title">
           <h1>抽取结果</h1>
           <p id="jobIdText">job_id: --</p>
         </div>
         <button id="backBtn" type="button">返回列表</button>
       </header>
 
-      <section class="status">
-        <span id="statusText">读取任务状态...</span>
+      <section class="result-summary">
+        <div class="result-state">
+          <span id="statusText" class="result-badge">读取任务状态...</span>
+          <span id="previewMeta" class="metric-chip">结果数据 · 等待生成</span>
+        </div>
         <span id="riskText" class="warning"></span>
         <a id="downloadBtn" href="#" hidden>下载 Excel</a>
       </section>
 
       <section class="preview">
         <div class="table-scroll">
-          <table>
+          <table class="preview-table">
             <thead id="previewHead"></thead>
             <tbody id="previewBody"></tbody>
           </table>

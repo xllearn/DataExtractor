@@ -7,36 +7,69 @@
     <link rel="stylesheet" href="/web/style.css" />
   </head>
   <body>
-    <main class="shell">
-      <header class="toolbar">
-        <div>
+    <main class="app-shell">
+      <header class="app-header">
+        <div class="app-title">
           <h1>DataExtractor</h1>
-          <p id="configStatus">正在读取配置状态...</p>
+          <p>政策文章结构化抽取工作台</p>
         </div>
         <button id="refreshBtn" type="button">刷新</button>
       </header>
 
-      <section class="controls">
-        <input id="keywordInput" type="search" placeholder="关键词" />
-        <button id="searchBtn" type="button">搜索</button>
-        <label><input id="noOcrInput" type="checkbox" checked /> 跳过 OCR</label>
-        <label><input id="noLlmInput" type="checkbox" /> 跳过 LLM</label>
-        <button id="extractBtn" type="button">生成 Excel</button>
+      <section class="status-grid" aria-label="配置状态">
+        <span id="databaseChip" class="status-chip status-chip-pending">
+          <span class="status-dot"></span>
+          <strong>数据库</strong>
+          <span id="databaseStatusText">读取中</span>
+        </span>
+        <span id="llmChip" class="status-chip status-chip-pending">
+          <span class="status-dot"></span>
+          <strong>LLM</strong>
+          <span id="llmStatusText">读取中</span>
+        </span>
+        <span id="ocrChip" class="status-chip status-chip-pending">
+          <span class="status-dot"></span>
+          <strong>OCR</strong>
+          <span id="ocrStatusText">读取中</span>
+        </span>
+        <span class="status-chip status-chip-muted">
+          <strong>配置</strong>
+          <span id="configStatus">正在读取配置状态...</span>
+        </span>
+        <span class="status-chip status-chip-muted">
+          <strong>版本</strong>
+          <span id="versionStatusText">--</span>
+        </span>
       </section>
 
-      <section class="advanced">
-        <label for="externalOcrInput">外部 OCR 文本</label>
-        <textarea id="externalOcrInput" rows="4" placeholder="粘贴图片表格 OCR 文本"></textarea>
+      <section class="command-panel">
+        <div class="controls">
+          <input id="keywordInput" type="search" placeholder="关键词" />
+          <button id="searchBtn" type="button">搜索</button>
+          <label class="switch-row"><input id="noOcrInput" type="checkbox" checked /> 跳过 OCR</label>
+          <label class="switch-row"><input id="noLlmInput" type="checkbox" /> 跳过 LLM</label>
+          <button id="extractBtn" type="button">生成 Excel</button>
+        </div>
+
+        <details class="ocr-panel">
+          <summary>
+            <span>外部 OCR 文本</span>
+            <span class="summary-hint">可选：粘贴图片表格 OCR 文本作为识别兜底</span>
+          </summary>
+          <textarea id="externalOcrInput" rows="4" placeholder="粘贴图片表格 OCR 文本"></textarea>
+        </details>
       </section>
 
-      <section class="status">
-        <span id="selectionStatus">已选择 0 条</span>
-        <span id="jobStatus"></span>
-        <span id="ocrWarning" class="warning"></span>
+      <section class="selection-panel">
+        <div class="selection-copy">
+          <span id="selectionStatus" class="metric-chip">已选择 0 条</span>
+          <span id="jobStatus"></span>
+          <span id="ocrWarning" class="warning"></span>
+        </div>
         <button id="clearSelectionBtn" type="button">清空已选择</button>
       </section>
 
-      <section class="pagination" aria-label="分页">
+      <section class="pagination-bar" aria-label="分页">
         <button id="prevPageBtn" type="button">上一页</button>
         <span id="pageStatus">第 0 / 0 页</span>
         <button id="nextPageBtn" type="button">下一页</button>
@@ -51,19 +84,21 @@
         <span id="totalStatus">总计 0 条</span>
       </section>
 
-      <table>
-        <thead>
-          <tr>
-            <th><input id="selectPageInput" type="checkbox" /></th>
-            <th>标题</th>
-            <th>地区</th>
-            <th>保险类型</th>
-            <th>审核时间</th>
-            <th>来源</th>
-          </tr>
-        </thead>
-        <tbody id="articleBody"></tbody>
-      </table>
+      <section class="table-card">
+        <table class="article-table">
+          <thead>
+            <tr>
+              <th class="checkbox-column"><input id="selectPageInput" type="checkbox" /></th>
+              <th>标题</th>
+              <th>地区</th>
+              <th>保险类型</th>
+              <th>审核时间</th>
+              <th>来源</th>
+            </tr>
+          </thead>
+          <tbody id="articleBody"></tbody>
+        </table>
+      </section>
     </main>
     <script src="/web/app.js?v=20260701_image_table"></script>
   </body>

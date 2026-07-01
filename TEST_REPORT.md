@@ -411,3 +411,31 @@ Notes:
 - Warnings from Paddle/FastAPI were non-fatal.
 - One random-5 image URL returned HTTP 502; that record still completed with a fallback/review row.
 - Generated artifacts remain local and are not committed.
+
+## 2026-07-01 Frontend UI Refresh Verification
+
+- Overall status: passed.
+- Scope: DataExtractor list workbench visual refresh, result preview readability, existing frontend safety constraints.
+
+| Check | Result |
+| --- | --- |
+| new workbench layout static tests | red/green verified |
+| `py -m unittest tests.test_web_app_static -v` | passed, 9 tests |
+| local browser home page check on port 8016 | passed, no browser error logs |
+| local browser unknown-job result page check | passed, no browser error logs |
+| local browser success result preview check | passed, no browser error logs |
+
+Verified frontend behavior:
+
+- Home page uses status chips for database, LLM, OCR, config path and web app version.
+- Search/generate behavior remains disabled when the database config is not query-ready.
+- External OCR text input is available behind a collapsed helper panel.
+- Article table keeps a sticky visual header and safe source links.
+- Result page shows a status badge, preview metadata and download action.
+- Result preview table uses a wide scrollable layout; preview headers stay horizontal with `white-space: nowrap`, and long `info_id` values wrap only in data cells.
+
+Notes:
+
+- The browser verification used a temporary local FastAPI server and temporary success-job metadata/workbook in ignored directories.
+- Temporary verification files were removed after the check.
+- No generated Excel files, logs, screenshots, `.env`, database credentials or API keys are committed.
