@@ -319,3 +319,43 @@
 
 - 本轮功能仍不提交 `.env`、`logs/`、`outputs/`、真实数据库连接串、真实 API Key 或真实样本 Excel。
 - 未跟踪的 `Q57D2088.tmp` 在本轮开始前已存在，仍未纳入提交。
+
+## 2026-07-01 续 9
+
+### 本轮目标
+
+继续修复截图中前端仍显示 `Cannot set properties of null (setting 'hidden')`、分页 `第 0 / 0 页` 但表格有数据、清空已选择和 OCR 默认状态不准确的问题；修复后完成自动化测试、AI 生成数据测试、真实数据库 20 条测试、前端实际页面验证，并推送 GitHub。
+
+### 已完成
+
+- `web/index.html`、`web/result.html` 的脚本地址加入版本参数，避免浏览器继续执行旧的 `/web/app.js`，从根因上规避旧脚本访问已删除 `downloadLink.hidden`。
+- `web/app.js` 新增分页规范化逻辑：当后端返回 rows 但 `total/total_pages` 缺失或异常时，至少按 `offset + items.length` 兜底；`currentPage` 有数据时保持从 1 开始。
+- `api_server.py` 的分页响应也增加一致性兜底，避免 provider 返回 items 但 total=0 时传给前端错误状态。
+- OCR 可用时前端默认取消“跳过 OCR”；OCR 不可用时默认勾选并禁用，同时显示“请安装 OCR 依赖或提供外部 OCR 文本”的明确提示。
+- `clearSelection()` 抽成显式函数，清空跨页选择、当前页 checkbox 和全选状态。
+- `web/result.js` 对结果页下载按钮和文本节点增加空元素保护，不再直接对可能不存在的节点写 `.hidden`。
+- `web/style.css` 使用真实存在的 `#downloadBtn` 样式，去掉旧 `#downloadLink` 选择器。
+- 新增/更新回归测试：分页 rows/total 一致性、count SQL 参数化、脚本缓存版本、OCR 默认使用逻辑、清空选择函数和结果页下载按钮防空。
+
+### 已验证
+
+- 聚焦红绿回归：新增 3 个失败用例先失败，修复后通过。
+- 局部回归：`py -m unittest tests.test_api_server tests.test_web_app_static tests.test_configured_db_and_fields -v`：38 tests OK。
+- 全量 `unittest`：`py -m unittest discover -s tests -v`：111 tests OK。
+- `pytest`：`py -m pytest -q`：111 passed，36 subtests passed，1 个 FastAPI/Starlette deprecation warning。
+- `compileall`：`py -m compileall -q -x "..." .`：通过，退出码 0。
+- AI 生成数据测试：`py -m unittest tests.test_ai_generated_cases -v`：1 test OK。
+- 真实数据库 20 条：`py scripts\run_real_db_20.py --result-dir reports\web_fix_real_20_20260701_105540`：`passed=True`；生成 Excel 包含 6 个 sheet，`结果数据` 固定 26 列，未遇到 429。
+- 前端实际页面验证：
+  - API 启动在 `http://127.0.0.1:8014/`，首页显示 `database_configured=true`、LLM 已配置、OCR 不可用。
+  - 首页脚本为 `/web/app.js?v=20260701_web_fix`，总数 `7584`，初始 `第 1 / 380 页`，无 `0/0` 错误。
+  - 搜索“医保”后回到第 1 页，总计 `5445` 条；每页 10 后可翻到 `第 2 / 759 页`。
+  - 跨页选择保留计数，清空已选择后恢复 `已选择 0 条`。
+  - 选择 5 条生成 Excel 后跳转 `/web/result.html?job_id=job_6a90ee563171`；结果页 `生成成功`、preview headers=26、preview rows=5、下载按钮可见，无控制台错误。
+  - 下载验证：下载的 Excel 有 6 个 sheet，`结果数据` 表头 26 列。
+
+### 注意事项
+
+- 真实数据库测试产物位于 `reports/web_fix_real_20_20260701_105540/`，包含真实 URL、日志和 Excel，仅作本地验收证据，不提交。
+- 前端服务验证产物位于 ignored 的 `logs/web_fix_frontend/`、`outputs/web_fix_frontend/`，不提交。
+- 未跟踪的 `Q57D2088.tmp` 在本轮开始前已存在，仍未纳入提交。

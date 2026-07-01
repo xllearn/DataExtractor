@@ -100,3 +100,36 @@ Real-config API smoke:
 - `/api/config/status`: passed, `database_configured=true`, `safe_to_query=true`, `ocr_available=false`
 - `/api/articles?limit=1&offset=0`: passed, `total=7584`
 - `/api/extract` job + `/api/jobs/{job_id}` + `/api/jobs/{job_id}/preview`: passed, job success, preview headers=26, preview rows=1
+
+## 2026-07-01 Supplemental Frontend Pagination Cache Acceptance
+
+- Overall status: passed.
+- P0/P1: none found.
+- Fixed stale browser script execution by versioning `/web/app.js` and `/web/result.js`.
+- Fixed frontend pagination normalization so visible rows cannot coexist with `total=0` and `第 0 / 0 页`.
+- Fixed API pagination payload consistency for provider responses that include items but return zero total.
+- Fixed OCR default behavior: available OCR means do not skip OCR; unavailable OCR remains checked/disabled with an explicit warning.
+- Fixed clear selection across pages.
+- Guarded result-page download button DOM writes.
+
+## 2026-07-01 Supplemental Verification
+
+| Check | Result |
+| --- | --- |
+| Focused red/green regression | passed |
+| `py -m unittest tests.test_api_server tests.test_web_app_static tests.test_configured_db_and_fields -v` | passed, 38 tests |
+| `py -m unittest discover -s tests -v` | passed, 111 tests |
+| `py -m pytest -q` | passed, 111 tests, 36 subtests, 1 deprecation warning |
+| project `compileall` with ignored-dir excludes | passed |
+| AI generated data | passed |
+| real DB 20 | passed, result rows 24, fixed 26 headers, 6 sheets |
+| frontend browser flow | passed, search/pagination/clear selection/job result/download |
+
+Frontend browser flow details:
+
+- Initial page: `total=7584`, `第 1 / 380 页`, script `/web/app.js?v=20260701_web_fix`.
+- Page size 10 + next page: `第 2 / 759 页`, 10 rows.
+- Search keyword `医保`: `total=5445`, page reset to 1.
+- Selection: selected 5 rows, request used `no_ocr=true`, `no_llm=false`.
+- Job result: `job_6a90ee563171`, success, preview headers=26, preview rows=5, download visible.
+- Downloaded workbook: 6 sheets, `结果数据` fixed 26 headers.

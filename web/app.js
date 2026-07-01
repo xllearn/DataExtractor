@@ -116,11 +116,35 @@ function appendSourceCell(row, value) {
   row.appendChild(cell);
 }
 
-function updatePagination(payload) {
-  state.totalItems = Number(payload.total || 0);
-  state.totalPages = Number(payload.total_pages || 0);
-  state.currentPage = Number(payload.page || 1);
-  state.pageSize = Number(payload.page_size || state.pageSize);
+function normalizePositiveInt(value, fallback = 0) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 0) return fallback;
+  return Math.floor(parsed);
+}
+
+function normalizePagination(payload = {}, itemCount = 0, requestedPage = state.currentPage) {
+  const pageSize = Math.max(1, normalizePositiveInt(payload.page_size || payload.limit, state.pageSize || 20));
+  const requested = Math.max(1, normalizePositiveInt(requestedPage, 1));
+  const offset = normalizePositiveInt(payload.offset, (requested - 1) * pageSize);
+  const minimumTotal = itemCount ? offset + itemCount : 0;
+  const total = Math.max(normalizePositiveInt(payload.total, itemCount), minimumTotal);
+  const computedTotalPages = total ? Math.ceil(total / pageSize) : 0;
+  const totalPages = total ? Math.max(1, normalizePositiveInt(payload.total_pages, computedTotalPages)) : 0;
+  let page = normalizePositiveInt(payload.page, offset ? Math.floor(offset / pageSize) + 1 : requested);
+  if (totalPages) {
+    page = Math.min(Math.max(1, page), totalPages);
+  } else {
+    page = 0;
+  }
+  return {total, totalPages, page, pageSize};
+}
+
+function updatePagination(payload, itemCount = 0, requestedPage = state.currentPage) {
+  const pagination = normalizePagination(payload, itemCount, requestedPage);
+  state.totalItems = pagination.total;
+  state.totalPages = pagination.totalPages;
+  state.currentPage = pagination.page;
+  state.pageSize = pagination.pageSize;
   elements.pageStatus.textContent = `第 ${state.totalPages ? state.currentPage : 0} / ${state.totalPages} 页`;
   elements.totalStatus.textContent = `总计 ${state.totalItems} 条`;
   elements.selectPageInput.checked = false;
@@ -140,10 +164,11 @@ async function loadStatus() {
   if (!state.ocrAvailable) {
     elements.noOcrInput.checked = true;
     elements.noOcrInput.disabled = true;
-    elements.ocrWarning.textContent = "OCR 不可用，图片表格可能无法抽取";
+    elements.ocrWarning.textContent = "OCR 不可用，图片型表格可能无法抽取。请安装 OCR 依赖或提供外部 OCR 文本。";
   } else {
+    elements.noOcrInput.checked = false;
     elements.noOcrInput.disabled = false;
-    elements.ocrWarning.textContent = "";
+    elements.ocrWarning.textContent = "OCR 可用，有图片时将自动按低置信度策略使用 OCR";
   }
   setQueryEnabled(state.safeToQuery);
 
@@ -151,7 +176,7 @@ async function loadStatus() {
     selectedIds.clear();
     elements.selectPageInput.checked = false;
     updateSelection();
-    updatePagination({total: 0, total_pages: 0, page: 0, page_size: state.pageSize});
+    updatePagination({total: 0, total_pages: 0, page: 0, page_size: state.pageSize}, 0, 0);
     setEmptyRow("暂无数据，数据库未配置或查询失败");
     setStatus(status.database_status_reason || "数据库未配置，请用 --config 指定可用数据库配置后重启服务", true);
   } else {
@@ -201,12 +226,13 @@ async function searchArticles(page = 1) {
     const keyword = encodeURIComponent(elements.keywordInput.value.trim());
     const offset = Math.max(0, (page - 1) * state.pageSize);
     const payload = await fetchJson(`/api/articles?keyword=${keyword}&limit=${state.pageSize}&offset=${offset}`);
-    renderArticles(payload.items);
-    updatePagination(payload);
-    setStatus(payload.items && payload.items.length ? "查询完成" : "暂无匹配数据");
+    const items = Array.isArray(payload.items) ? payload.items : [];
+    renderArticles(items);
+    updatePagination(payload, items.length, page);
+    setStatus(items.length ? "查询完成" : "暂无匹配数据");
   } catch (error) {
     renderArticles([]);
-    updatePagination({total: 0, total_pages: 0, page: 0, page_size: state.pageSize});
+    updatePagination({total: 0, total_pages: 0, page: 0, page_size: state.pageSize}, 0, 0);
     setStatus(error.message, true);
   } finally {
     state.loadingArticles = false;
@@ -264,14 +290,16 @@ elements.selectPageInput.addEventListener("change", () => {
   updateSelection();
 });
 
-elements.clearSelectionBtn.addEventListener("click", () => {
+function clearSelection() {
   selectedIds.clear();
   for (const input of elements.articleBody.querySelectorAll("input[type=checkbox]")) {
     input.checked = false;
   }
   elements.selectPageInput.checked = false;
   updateSelection();
-});
+}
+
+elements.clearSelectionBtn.addEventListener("click", clearSelection);
 
 elements.refreshBtn.addEventListener("click", async () => {
   try {

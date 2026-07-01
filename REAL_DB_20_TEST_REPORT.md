@@ -382,3 +382,31 @@ py main.py --config logs/real_db_20/db_config.runtime.yml --field-config config/
 - 输出目录：`outputs/real_db_20/external_ocr_sample/`。
 - 结果检查：`补助限额=100000元`、`报销比例=80%`、`备注=投保年龄：6-65周岁`；`人员类型` 和 `病种名称` 为空。
 - 字段证据：包含 `source=external_ocr_text`。
+
+## 16. 2026-07-01 前端分页修复后真实库复测
+
+### 16.1 真实 20 条批量生成
+
+- 命令：`py scripts\run_real_db_20.py --result-dir reports\web_fix_real_20_20260701_105540`。
+- 运行结果：通过，`passed=True`，退出码 0。
+- 数据来源：`logs/real_db_20/db_config.runtime.yml`，按 `logs/real_db_20/selected_ids.txt` 取 20 条真实数据。
+- 输出 Excel：`reports\web_fix_real_20_20260701_105540\real_db_20\outputs\商业补充保险抽取结果_20260701_110134.xlsx`。
+- 校验结果：6 个 sheet，`结果数据` 固定 26 列，结果行 24 行。
+- 已知坏病种检查：`known_bad_disease_hits=[]`，`generic_disease_hits=[]`。
+- LLM 限流：命令日志未出现 `429`。
+
+### 16.2 前端真实页面 5 条生成
+
+- API 启动：`py api_server.py --host 127.0.0.1 --port 8014 --config logs/real_db_20/db_config.runtime.yml --field-config config/field_mapping.yml --llm-config config/llm_config.yml`。
+- 首页状态：数据库已配置，LLM 已配置，OCR 不可用；`total=7584`，`第 1 / 380 页`，20 行数据。
+- 分页验证：切换每页 10 后可进入 `第 2 / 759 页`，总数仍为 7584。
+- 搜索验证：搜索 `医保` 后回到第 1 页，`total=5445`。
+- 选择验证：跨页选择计数保留；清空已选择后显示 `已选择 0 条`。
+- 生成验证：选择 5 条后生成 job `job_6a90ee563171`，结果页显示 `生成成功`。
+- 结果页校验：preview headers=26，preview rows=5，下载按钮可见，无浏览器控制台错误。
+- 下载校验：下载文件包含 6 个 sheet，`结果数据` 表头 26 列。
+
+### 16.3 结论
+
+- 本轮未发现阻断推送的 P0/P1。
+- 真实数据产物和服务日志仅作本地验收证据，不纳入 Git 提交。

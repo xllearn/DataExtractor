@@ -55,7 +55,7 @@ select {
 }
 
 button,
-a#downloadLink {
+a#downloadBtn {
   padding: 8px 12px;
   border: 1px solid #1f6feb;
   border-radius: 6px;

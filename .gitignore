@@ -11,6 +11,7 @@ __pycache__/
 outputs/
 logs/
 temp_images/
+reports/web_fix_real_20_*/
 
 samples/**/*.xlsx
 samples/**/*.jpg

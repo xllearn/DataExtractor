@@ -244,3 +244,37 @@ py api_server.py --host 127.0.0.1 --port 8000 --config logs/real_db_20/db_config
 - 启动：`py api_server.py --host 127.0.0.1 --port 8012 --config logs/real_db_20/db_config.runtime.yml --field-config config/field_mapping.yml --llm-config config/llm_config.yml`。
 - 验证：`/api/config/status`、`/api/articles?limit=1&offset=0`、`/api/extract` job、`/api/jobs/{job_id}`、`/api/jobs/{job_id}/preview`。
 - 结果：通过；`database_configured=true`、`safe_to_query=true`、`ocr_available=false`、`total=7584`、job success、preview headers=26、preview rows=1。
+
+## 2026-07-01 Supplemental Frontend Pagination Cache Fix
+
+### Fix Scope
+
+- Fixed stale browser script risk by loading `/web/app.js?v=20260701_web_fix` and `/web/result.js?v=20260701_web_fix`.
+- Added frontend pagination normalization so rows cannot be displayed with `total=0` and `第 0 / 0 页`.
+- Added API pagination consistency fallback for provider responses with items but an incorrect zero total.
+- OCR available now defaults to using OCR; OCR unavailable remains checked/disabled with a clear fallback warning.
+- `clearSelection()` now clears cross-page selection, current checkboxes and the select-current-page checkbox.
+- Result page download button writes are guarded against missing DOM nodes.
+
+### Verification
+
+| Check | Result |
+| --- | --- |
+| Focused red/green regression | passed |
+| `py -m unittest tests.test_api_server tests.test_web_app_static tests.test_configured_db_and_fields -v` | passed, 38 tests |
+| `py -m unittest discover -s tests -v` | passed, 111 tests |
+| `py -m pytest -q` | passed, 111 tests, 36 subtests, 1 deprecation warning |
+| project `compileall` with ignored-dir excludes | passed |
+| `py -m unittest tests.test_ai_generated_cases -v` | passed, 1 test |
+| `py scripts\run_real_db_20.py --result-dir reports\web_fix_real_20_20260701_105540` | passed |
+
+### Frontend Page Verification
+
+- Real API served at `http://127.0.0.1:8014/`.
+- Initial page: `total=7584`, `第 1 / 380 页`, 20 rows, no console error.
+- Page size 10 and next page: `第 2 / 759 页`, 10 rows.
+- Search keyword `医保`: `total=5445`, page reset to 1.
+- Cross-page selected count stayed at 2; clear selection reset to `已选择 0 条`.
+- Selected 5 rows and generated Excel; result page `job_6a90ee563171` showed success, 26 preview headers, 5 preview rows and visible download URL.
+- Downloaded workbook check: 6 sheets, `结果数据` fixed 26 headers.
+- P0/P1: none found.

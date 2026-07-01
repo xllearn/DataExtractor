@@ -12,7 +12,13 @@ const elements = {
 };
 
 function setText(node, value) {
+  if (!node) return;
   node.textContent = value || "";
+}
+
+function setHidden(node, hidden) {
+  if (!node) return;
+  node.hidden = hidden;
 }
 
 async function fetchJson(url) {
@@ -80,8 +86,10 @@ async function pollJob() {
       setText(elements.riskText, "使用了外部 OCR 文本");
     }
     if (job.status === "success") {
-      elements.downloadBtn.href = job.download_url;
-      elements.downloadBtn.hidden = false;
+      if (elements.downloadBtn) {
+        elements.downloadBtn.href = job.download_url;
+        setHidden(elements.downloadBtn, false);
+      }
       await loadPreview(job.preview_url || `/api/jobs/${encodeURIComponent(jobId)}/preview`);
       return;
     }
@@ -97,8 +105,10 @@ async function pollJob() {
   }
 }
 
-elements.backBtn.addEventListener("click", () => {
-  window.location.href = "/";
-});
+if (elements.backBtn) {
+  elements.backBtn.addEventListener("click", () => {
+    window.location.href = "/";
+  });
+}
 
 pollJob();

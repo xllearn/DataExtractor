@@ -216,6 +216,50 @@ class DbReaderTests(unittest.TestCase):
         self.assertEqual(query.params["selected_id_0"], "1")
         self.assertEqual(query.params["selected_id_1"], "2")
 
+    def test_builds_count_query_with_same_safe_filters(self):
+        from config_loader import DbConfig, QueryConfig, SourceConfig
+        from db_reader import build_article_count_query
+        from keyword_utils import expand_keyword_groups
+
+        config = DbConfig(
+            exists=True,
+            database_url="sqlite:///:memory:",
+            source=SourceConfig(
+                table="数据源.商业补充保险",
+                id_column="id",
+                info_id_column="info_id",
+                title_column="标题",
+                html_column="正文",
+                text_column="纯文本",
+                source_url_column="链接",
+            ),
+            query=QueryConfig(keyword_mode="or"),
+        )
+
+        selected_query = build_article_count_query(
+            config=config,
+            selected_ids=["1", "2"],
+            keyword_groups=expand_keyword_groups("医保"),
+            keyword_mode="or",
+        )
+        keyword_query = build_article_count_query(
+            config=config,
+            selected_ids=[],
+            keyword_groups=expand_keyword_groups("医保"),
+            keyword_mode="or",
+        )
+
+        self.assertIn("SELECT COUNT(*) AS total", selected_query.statement)
+        self.assertIn("FROM `数据源`.`商业补充保险`", selected_query.statement)
+        self.assertIn("`id` IN", selected_query.statement)
+        self.assertIn("`info_id` IN", selected_query.statement)
+        self.assertNotIn("LIKE", selected_query.statement)
+        self.assertNotIn("LIMIT", selected_query.statement)
+        self.assertNotIn("OFFSET", selected_query.statement)
+        self.assertEqual(selected_query.params["selected_id_0"], "1")
+        self.assertIn("LIKE", keyword_query.statement)
+        self.assertTrue(any(str(value).startswith("%医保%") for value in keyword_query.params.values()))
+
     def test_allows_chinese_table_and_column_identifiers(self):
         from db_reader import quote_identifier, quote_table, validate_column_name, validate_table_name
 

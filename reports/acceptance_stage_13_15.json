@@ -3,11 +3,24 @@
   "overall_passed": true,
   "p0_p1": "none",
   "commands": {
-    "unittest": {"passed": true, "tests": 78},
-    "pytest": {"passed": true, "tests": 78, "subtests": 30},
-    "compileall_project": {"passed": true},
-    "ai_generated": {"passed": true},
-    "api_server": {"passed": true}
+    "unittest": {
+      "passed": true,
+      "tests": 78
+    },
+    "pytest": {
+      "passed": true,
+      "tests": 78,
+      "subtests": 30
+    },
+    "compileall_project": {
+      "passed": true
+    },
+    "ai_generated": {
+      "passed": true
+    },
+    "api_server": {
+      "passed": true
+    }
   },
   "real_db_smoke": {
     "passed": true,
@@ -36,9 +49,19 @@
   "supplemental_2026_07_01": {
     "overall_passed": true,
     "commands": {
-      "unittest": {"passed": true, "tests": 90},
-      "pytest": {"passed": true, "tests": 90, "subtests": 33, "warnings": 1},
-      "compileall_project": {"passed": true}
+      "unittest": {
+        "passed": true,
+        "tests": 90
+      },
+      "pytest": {
+        "passed": true,
+        "tests": 90,
+        "subtests": 33,
+        "warnings": 1
+      },
+      "compileall_project": {
+        "passed": true
+      }
     },
     "web_ui_error_fix": {
       "passed": true,
@@ -61,10 +84,23 @@
   "supplemental_2026_07_01_pagination_job_ocr": {
     "overall_passed": true,
     "commands": {
-      "focused": {"passed": true, "tests": 20},
-      "unittest": {"passed": true, "tests": 107},
-      "pytest": {"passed": true, "tests": 107, "subtests": 36, "warnings": 1},
-      "compileall_project": {"passed": true}
+      "focused": {
+        "passed": true,
+        "tests": 20
+      },
+      "unittest": {
+        "passed": true,
+        "tests": 107
+      },
+      "pytest": {
+        "passed": true,
+        "tests": 107,
+        "subtests": 36,
+        "warnings": 1
+      },
+      "compileall_project": {
+        "passed": true
+      }
     },
     "pagination": {
       "api_returns_total_and_page_metadata": true,
@@ -109,6 +145,72 @@
       "job_status": "success",
       "preview_headers": 26,
       "preview_rows": 1
+    }
+  },
+  "supplemental_2026_07_01_frontend_pagination_cache": {
+    "overall_passed": true,
+    "p0_p1": "none",
+    "commands": {
+      "focused_red_green": {
+        "passed": true
+      },
+      "focused_unittest": {
+        "passed": true,
+        "tests": 38
+      },
+      "unittest": {
+        "passed": true,
+        "tests": 111
+      },
+      "pytest": {
+        "passed": true,
+        "tests": 111,
+        "subtests": 36,
+        "warnings": 1
+      },
+      "compileall_project": {
+        "passed": true
+      },
+      "ai_generated": {
+        "passed": true,
+        "tests": 1
+      },
+      "real_db_20": {
+        "passed": true,
+        "result_rows": 24,
+        "sheet_count": 6,
+        "fixed_26_headers": true
+      }
+    },
+    "fixes": {
+      "script_cache_busting": true,
+      "frontend_pagination_normalization": true,
+      "api_items_zero_total_fallback": true,
+      "ocr_available_defaults_to_use_ocr": true,
+      "ocr_unavailable_checked_disabled_warning": true,
+      "clear_selection_cross_page": true,
+      "result_download_button_dom_guard": true
+    },
+    "frontend_browser_flow": {
+      "passed": true,
+      "initial_total": 7584,
+      "initial_page": "第 1 / 380 页",
+      "script": "/web/app.js?v=20260701_web_fix",
+      "page_size_10_next_page": "第 2 / 759 页",
+      "keyword": "医保",
+      "keyword_total": 5445,
+      "selected_rows": 5,
+      "job_id": "job_6a90ee563171",
+      "job_status": "success",
+      "preview_headers": 26,
+      "preview_rows": 5,
+      "download_workbook_sheet_count": 6,
+      "download_workbook_headers": 26,
+      "console_errors": []
+    },
+    "artifact_notes": {
+      "real_db_20_result_dir": "reports/web_fix_real_20_20260701_105540",
+      "commit_artifacts": false
     }
   }
 }

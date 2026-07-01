@@ -183,6 +183,8 @@ def _provider_items_and_total(result: object) -> tuple[list, int]:
 
 
 def _pagination_payload(items: list, total: int, limit: int, offset: int) -> dict:
+    minimum_total = offset + len(items) if items else 0
+    total = max(int(total or 0), minimum_total)
     page = offset // limit + 1
     total_pages = (total + limit - 1) // limit if total else 0
     return {

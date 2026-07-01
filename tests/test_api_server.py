@@ -127,6 +127,32 @@ class ApiServerTests(unittest.TestCase):
             self.assertEqual(selected["total"], 3)
             self.assertEqual(len(selected["items"]), 2)
 
+    def test_articles_never_returns_items_with_zero_total(self):
+        from api_server import create_app
+
+        def provider(**_kwargs):
+            return {
+                "items": [
+                    {
+                        "_source_id": "row-11",
+                        "Title": "分页兜底测试",
+                        "SourceURL": "https://example.com/row-11",
+                    }
+                ],
+                "total": 0,
+            }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            client = TestClient(create_app(record_provider=provider, output_dir=Path(tmp) / "out", log_dir=Path(tmp) / "logs"))
+
+            payload = client.get("/api/articles?limit=10&offset=10").json()
+
+        self.assertEqual(payload["page"], 2)
+        self.assertEqual(payload["total"], 11)
+        self.assertEqual(payload["total_pages"], 2)
+        self.assertTrue(payload["has_prev"])
+        self.assertFalse(payload["has_next"])
+
     def test_job_preview_rejects_unknown_and_unfinished_jobs(self):
         from api_server import create_app
 
