@@ -1,6 +1,8 @@
 import importlib.util
 import inspect
+import ipaddress
 import logging
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
@@ -14,6 +16,8 @@ from utils import ensure_dir
 
 
 SUPPORTED_IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
+DEFAULT_IMAGE_DOWNLOAD_TIMEOUT = 20.0
+DEFAULT_IMAGE_MAX_BYTES = 10 * 1024 * 1024
 _OCR_ENGINE = None
 OCR_UNAVAILABLE_REASON = "未安装 paddleocr/paddlepaddle 或 OCR 初始化失败"
 OCR_INSTALL_HINT = "请安装 paddleocr 和 paddlepaddle，或使用外部 OCR 文本 fallback"
@@ -109,16 +113,102 @@ def process_image_ocr(
     return OcrSummary(text="\n\n".join(texts), success_count=success_count, failure_count=failure_count, errors=errors)
 
 
-def download_image(url: str, temp_dir: Path, record_index: int, image_index: int) -> Path:
+def _env_float(name: str, default: float) -> float:
+    try:
+        return float(os.getenv(name, "") or default)
+    except Exception:
+        return default
+
+
+def _env_int(name: str, default: int) -> int:
+    try:
+        return int(os.getenv(name, "") or default)
+    except Exception:
+        return default
+
+
+def _validate_download_url(url: str) -> None:
+    parsed = urlparse(url)
+    if parsed.scheme not in {"http", "https"}:
+        raise ValueError("图片下载只允许 http/https 协议")
+    host = (parsed.hostname or "").strip().lower().rstrip(".")
+    if not host:
+        raise ValueError("图片 URL 缺少主机名")
+    if host == "localhost" or host.endswith(".localhost"):
+        raise ValueError("拒绝下载 localhost 图片地址")
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        return
+    if ip.is_loopback or ip.is_private or ip.is_link_local or ip.is_unspecified or ip.is_reserved:
+        raise ValueError(f"拒绝下载内网或保留地址图片: {host}")
+
+
+def _validate_content_type(content_type: str) -> None:
+    media_type = str(content_type or "").split(";", 1)[0].strip().lower()
+    if media_type and not media_type.startswith("image/"):
+        raise ValueError(f"图片响应 Content-Type 非 image/*: {media_type}")
+
+
+def _verify_downloaded_image(path: Path) -> None:
+    try:
+        with Image.open(path) as image:
+            image.verify()
+    except Exception as exc:
+        raise ValueError(f"下载内容不是可识别图片: {mask_sensitive_text(str(exc))}") from exc
+
+
+def download_image(
+    url: str,
+    temp_dir: Path,
+    record_index: int,
+    image_index: int,
+    timeout: float | None = None,
+    max_bytes: int | None = None,
+) -> Path:
+    _validate_download_url(url)
     parsed = urlparse(url)
     suffix = Path(parsed.path).suffix.lower()
     if suffix not in SUPPORTED_IMAGE_EXTS:
         suffix = ".jpg"
+    ensure_dir(temp_dir)
     output_path = temp_dir / f"record_{record_index:04d}_image_{image_index:03d}{suffix}"
 
-    response = requests.get(url, timeout=20)
-    response.raise_for_status()
-    output_path.write_bytes(response.content)
+    timeout = _env_float("IMAGE_DOWNLOAD_TIMEOUT", DEFAULT_IMAGE_DOWNLOAD_TIMEOUT) if timeout is None else timeout
+    max_bytes = _env_int("IMAGE_MAX_BYTES", DEFAULT_IMAGE_MAX_BYTES) if max_bytes is None else int(max_bytes)
+    try:
+        response_context = requests.get(url, timeout=timeout, stream=True)
+        with response_context as response:
+            response.raise_for_status()
+            _validate_content_type(response.headers.get("Content-Type", ""))
+            content_length = response.headers.get("Content-Length")
+            if content_length:
+                try:
+                    if int(content_length) > max_bytes:
+                        raise ValueError(f"图片过大，超过限制 {max_bytes} bytes")
+                except ValueError:
+                    raise
+                except Exception:
+                    pass
+            total = 0
+            with output_path.open("wb") as file:
+                for chunk in response.iter_content(chunk_size=8192):
+                    if not chunk:
+                        continue
+                    total += len(chunk)
+                    if total > max_bytes:
+                        raise ValueError(f"图片过大，超过限制 {max_bytes} bytes")
+                    file.write(chunk)
+    except Exception as exc:
+        if output_path.exists():
+            try:
+                output_path.unlink()
+            except OSError:
+                pass
+        if isinstance(exc, ValueError):
+            raise
+        raise RuntimeError(mask_sensitive_text(str(exc))) from exc
+    _verify_downloaded_image(output_path)
     return output_path
 
 
