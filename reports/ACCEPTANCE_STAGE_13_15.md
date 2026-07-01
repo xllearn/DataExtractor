@@ -133,3 +133,27 @@ Frontend browser flow details:
 - Selection: selected 5 rows, request used `no_ocr=true`, `no_llm=false`.
 - Job result: `job_6a90ee563171`, success, preview headers=26, preview rows=5, download visible.
 - Downloaded workbook: 6 sheets, `结果数据` fixed 26 headers.
+
+## 2026-07-01 Supplemental Persistent Job OCR Acceptance
+
+- Overall status: passed.
+- P0/P1: none found.
+- `/api/config/status` includes `ocr_install_hint`; missing `paddleocr` and missing `paddlepaddle/paddle` are reported separately.
+- `/api/articles` regression confirms total is the full filtered count, not the current page length.
+- `/api/extract` returns a real `job_YYYYMMDD_HHMMSS_xxxxxxxx` and result page URL; Excel file names are not accepted as job ids.
+- Job metadata is persisted to `outputs/web/jobs/<job_id>.json` and does not expose local absolute paths.
+- `/api/jobs/{job_id}` and `/api/jobs/{job_id}/preview` work after API restart for completed jobs.
+- Result page 404 now displays “任务不存在或已过期，请返回列表重新生成。” instead of raw `Not Found`.
+- Real DB browser flow showed `total=7584`, `第 1 / 380 页`, job `job_20260701_114243_49763acb`, 26 preview headers, 1 preview row and a downloadable 6-sheet workbook.
+
+| Check | Result |
+| --- | --- |
+| focused persistent job regressions | passed, 2 tests |
+| focused OCR/result page regressions | passed, 2 tests |
+| focused API/OCR/static/config regression | passed, 44 tests |
+| `py -m unittest discover -s tests -v` | passed, 114 tests |
+| `py -m pytest -q` | passed, 114 tests, 36 subtests, 1 deprecation warning |
+| project `compileall` with ignored-dir excludes | passed |
+| AI generated data | passed |
+| real DB 20 | passed, `reports/web_fix_persistent_job_20260701_113409` |
+| frontend browser restart flow | passed |

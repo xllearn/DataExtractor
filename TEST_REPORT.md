@@ -278,3 +278,35 @@ py api_server.py --host 127.0.0.1 --port 8000 --config logs/real_db_20/db_config
 - Selected 5 rows and generated Excel; result page `job_6a90ee563171` showed success, 26 preview headers, 5 preview rows and visible download URL.
 - Downloaded workbook check: 6 sheets, `结果数据` fixed 26 headers.
 - P0/P1: none found.
+
+## 2026-07-01 Supplemental Persistent Job and OCR Status Verification
+
+- Overall status: passed.
+- P0/P1: none found.
+- Fixed OCR dependency diagnostics and exposed `ocr_install_hint` through `/api/config/status`.
+- Fixed job id generation so `/api/extract` returns `job_YYYYMMDD_HHMMSS_xxxxxxxx`, not an Excel file name.
+- Persisted job metadata to `outputs/web/jobs/<job_id>.json` and restored completed jobs after API restart.
+- Result page now shows a friendly expired/missing task message instead of raw `Not Found`.
+- Added regression coverage so `/api/articles` reports the full total, not the current page length.
+
+| Check | Result |
+| --- | --- |
+| focused persistent job regressions | passed, 2 tests |
+| focused OCR/result page regressions | passed, 2 tests |
+| `py -m unittest tests.test_api_server tests.test_ocr_status_and_image_risk tests.test_web_app_static tests.test_configured_db_and_fields -v` | passed, 44 tests |
+| `py -m unittest discover -s tests -v` | passed, 114 tests |
+| `py -m pytest -q` | passed, 114 tests, 36 subtests, 1 deprecation warning |
+| project `compileall` with ignored-dir excludes | passed |
+| AI generated data | passed, 1 test |
+| real DB 20 | passed |
+| frontend browser flow with API restart | passed |
+
+Frontend restart flow details:
+
+- Initial page: `total=7584`, `第 1 / 380 页`, 20 rows.
+- OCR unavailable warning was shown and skip OCR was checked/disabled.
+- Generated job: `job_20260701_114243_49763acb`.
+- Result before restart: success, preview headers=26, preview rows=1, download visible, no console errors.
+- Metadata file existed under `outputs/web/jobs/` and did not contain the absolute output directory.
+- Result after API restart: same job returned success, preview headers=26, preview rows=1.
+- Downloaded workbook: 6 sheets, `结果数据` fixed 26 headers.

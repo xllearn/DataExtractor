@@ -153,6 +153,40 @@ class ApiServerTests(unittest.TestCase):
         self.assertTrue(payload["has_prev"])
         self.assertFalse(payload["has_next"])
 
+    def test_articles_total_is_full_count_not_current_page_length(self):
+        from api_server import create_app
+
+        records = [
+            {
+                "_source_id": str(index),
+                "Title": f"分页测试 {index}",
+                "SourceURL": f"https://example.com/page/{index}",
+                "AuditTime": "2026-05-20",
+            }
+            for index in range(1, 121)
+        ]
+
+        def provider(keyword="", selected_ids=None, limit=50, offset=0):
+            rows = records
+            if keyword:
+                rows = [record for record in rows if keyword in record["Title"]]
+            if selected_ids:
+                selected = set(selected_ids)
+                rows = [record for record in rows if record["_source_id"] in selected]
+            return {"items": rows[offset : offset + limit], "total": len(rows)}
+
+        with tempfile.TemporaryDirectory() as tmp:
+            client = TestClient(create_app(record_provider=provider, output_dir=Path(tmp) / "out", log_dir=Path(tmp) / "logs"))
+
+            page = client.get("/api/articles?limit=50&offset=50").json()
+
+        self.assertEqual(page["total"], 120)
+        self.assertEqual(len(page["items"]), 50)
+        self.assertEqual(page["page"], 2)
+        self.assertEqual(page["total_pages"], 3)
+        self.assertTrue(page["has_next"])
+        self.assertTrue(page["has_prev"])
+
     def test_job_preview_rejects_unknown_and_unfinished_jobs(self):
         from api_server import create_app
 
@@ -168,11 +202,48 @@ class ApiServerTests(unittest.TestCase):
             missing = client.get("/api/jobs/nope")
             self.assertEqual(missing.status_code, 404)
             self.assertEqual(missing.headers["content-type"].split(";")[0], "application/json")
+            self.assertIn("任务不存在或已过期", missing.text)
+
+            file_name_job = client.get("/api/jobs/商业补充保险抽取结果_20260701_111750")
+            self.assertEqual(file_name_job.status_code, 404)
+            self.assertEqual(file_name_job.headers["content-type"].split(";")[0], "application/json")
+            self.assertIn("任务不存在或已过期", file_name_job.text)
 
             created = client.post("/api/extract", json={"selected_ids": ["1"]}).json()
             preview = client.get(f"/api/jobs/{created['job_id']}/preview")
             self.assertEqual(preview.status_code, 400)
             self.assertEqual(preview.headers["content-type"].split(";")[0], "application/json")
+
+    def test_successful_job_metadata_survives_app_recreation(self):
+        from api_server import create_app
+
+        with tempfile.TemporaryDirectory() as tmp:
+            output_dir = Path(tmp)
+            client = self._client(output_dir)
+
+            created = client.post("/api/extract", json={"selected_ids": ["1"], "mode": "merge", "no_ocr": True}).json()
+            job_id = created["job_id"]
+            self.assertTrue(job_id.startswith("job_"))
+            self.assertNotIn("商业补充保险抽取结果", job_id)
+
+            job = self._wait_job(client, job_id)
+            self.assertEqual(job["status"], "success")
+
+            metadata_path = output_dir / "jobs" / f"{job_id}.json"
+            self.assertTrue(metadata_path.exists())
+            self.assertNotIn(str(output_dir), metadata_path.read_text(encoding="utf-8"))
+
+            recreated = TestClient(create_app(record_provider=lambda **_: {"items": [], "total": 0}, output_dir=output_dir, log_dir=output_dir / "logs"))
+            restored = recreated.get(f"/api/jobs/{job_id}")
+            self.assertEqual(restored.status_code, 200)
+            restored_payload = restored.json()
+            self.assertEqual(restored_payload["status"], "success")
+            self.assertTrue(restored_payload["download_url"].startswith("/api/download/"))
+            self.assertNotIn(str(output_dir), str(restored_payload))
+
+            preview = recreated.get(f"/api/jobs/{job_id}/preview")
+            self.assertEqual(preview.status_code, 200)
+            self.assertEqual(len(preview.json()["headers"]), 26)
 
     def test_extract_validates_selection_and_download_rejects_traversal(self):
         with tempfile.TemporaryDirectory() as tmp:

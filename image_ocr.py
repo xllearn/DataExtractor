@@ -1,3 +1,4 @@
+import importlib.util
 import logging
 from dataclasses import dataclass
 from pathlib import Path
@@ -13,6 +14,7 @@ from utils import ensure_dir
 SUPPORTED_IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
 _OCR_ENGINE = None
 OCR_UNAVAILABLE_REASON = "未安装 paddleocr/paddlepaddle 或 OCR 初始化失败"
+OCR_INSTALL_HINT = "请安装 paddleocr 和 paddlepaddle，或使用外部 OCR 文本 fallback"
 
 
 @dataclass
@@ -23,12 +25,30 @@ class OcrSummary:
 
 
 def get_ocr_status() -> dict:
+    missing = []
+    if importlib.util.find_spec("paddleocr") is None:
+        missing.append("paddleocr")
+    if importlib.util.find_spec("paddle") is None:
+        missing.append("paddlepaddle")
+    if missing:
+        return {
+            "available": False,
+            "reason": "未安装 " + "/".join(missing),
+            "engine": "none",
+            "install_hint": OCR_INSTALL_HINT,
+        }
     try:
         from paddleocr import PaddleOCR  # noqa: F401
+        import paddle  # noqa: F401
 
-        return {"available": True, "reason": "OCR 可用", "engine": "paddleocr"}
-    except Exception:
-        return {"available": False, "reason": OCR_UNAVAILABLE_REASON, "engine": "none"}
+        return {"available": True, "reason": "OCR 可用", "engine": "paddleocr", "install_hint": ""}
+    except Exception as exc:
+        return {
+            "available": False,
+            "reason": f"{OCR_UNAVAILABLE_REASON}: {exc}",
+            "engine": "none",
+            "install_hint": OCR_INSTALL_HINT,
+        }
 
 
 def process_image_ocr(

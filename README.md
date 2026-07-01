@@ -460,7 +460,7 @@ http://127.0.0.1:8000/
 
 `/api/articles` 返回真实分页信息：`total`、`page`、`page_size`、`total_pages`、`has_next`、`has_prev`。前端支持上一页、下一页、每页 10/20/50、总数显示、搜索后回到第一页、跨页保留已选记录和清空已选择。
 
-`/api/extract` 创建后台 job 并返回 `job_id`、`status_url` 和 `result_page`。前端会自动跳转到 `/web/result.html?job_id=...`，结果页轮询 job 状态，成功后调用 preview API 预览 `结果数据` sheet 前 100 行，并提供下载按钮。下载接口只允许下载 `outputs/web/` 下由系统生成的 xlsx 文件，并防止路径穿越。当前页面没有登录权限系统，仅建议在本机或内网受控环境使用。
+`/api/extract` 创建后台 job 并返回 `job_id`、`status_url` 和 `result_page`。前端会自动跳转到 `/web/result.html?job_id=...`，结果页轮询 job 状态，成功后调用 preview API 预览 `结果数据` sheet 前 100 行，并提供下载按钮。job metadata 会写入 `outputs/web/jobs/<job_id>.json`，服务重启后已完成任务仍可查询和预览。下载接口只允许下载 `outputs/web/` 下由系统生成的 xlsx 文件，并防止路径穿越。当前页面没有登录权限系统，仅建议在本机或内网受控环境使用。
 
 首页和结果页脚本使用版本参数加载，例如 `/web/app.js?v=...`，用于避免浏览器继续执行旧版脚本造成 DOM id 不匹配。若页面曾打开过旧版本，刷新页面即可加载新脚本。
 
@@ -490,7 +490,16 @@ IMAGE_BASE_URL=https://example.com
 
 先用 `--no-ocr` 跑通主流程。后续再按本机 Python、CUDA/CPU 环境安装 PaddleOCR 和 PaddlePaddle。代码中的 OCR 已封装在 `image_ocr.py`，后续可以替换成其他 OCR 服务。即使开启 OCR，程序首轮也不会 OCR，只有低置信度且图片风险较高时才会重跑。
 
-`/api/config/status` 会返回 `ocr_available`、`ocr_status_reason` 和 `ocr_engine`。如果 OCR 可用，前端默认不勾选“跳过 OCR”；如果 OCR 不可用，前端会默认勾选并禁用“跳过 OCR”，并提示 `OCR 不可用，图片型表格可能无法抽取。请安装 OCR 依赖或提供外部 OCR 文本。`。当文章存在图片、没有 HTML 表格且 OCR 不可用或失败时，采集日志和抽取评估会写入：
+CPU 版本示例：
+
+```powershell
+pip install paddleocr
+pip install paddlepaddle
+```
+
+如果 PaddleOCR 在当前 Windows 或 Python 版本无法安装，建议使用 Python 3.10/3.11 创建单独环境，或先使用外部 OCR 文本 fallback。
+
+`/api/config/status` 会返回 `ocr_available`、`ocr_status_reason`、`ocr_install_hint` 和 `ocr_engine`。如果 OCR 可用，前端默认不勾选“跳过 OCR”；如果 OCR 不可用，前端会默认勾选并禁用“跳过 OCR”，并提示 `OCR 不可用，图片型表格可能无法抽取。请安装 OCR 依赖或提供外部 OCR 文本。`。当文章存在图片、没有 HTML 表格且 OCR 不可用或失败时，采集日志和抽取评估会写入：
 
 ```text
 图片表格未识别，抽取结果可能缺失保障责任、保额、保费、等待期、赔付比例等字段

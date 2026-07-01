@@ -12,6 +12,7 @@ outputs/
 logs/
 temp_images/
 reports/web_fix_real_20_*/
+reports/web_fix_persistent_job_*/
 
 samples/**/*.xlsx
 samples/**/*.jpg

@@ -212,5 +212,77 @@
       "real_db_20_result_dir": "reports/web_fix_real_20_20260701_105540",
       "commit_artifacts": false
     }
+  },
+  "supplemental_2026_07_01_persistent_job_ocr_status": {
+    "overall_passed": true,
+    "p0_p1": "none",
+    "commands": {
+      "focused_persistent_job": {
+        "passed": true,
+        "tests": 2
+      },
+      "focused_ocr_result_page": {
+        "passed": true,
+        "tests": 2
+      },
+      "focused_unittest": {
+        "passed": true,
+        "tests": 44
+      },
+      "unittest": {
+        "passed": true,
+        "tests": 114
+      },
+      "pytest": {
+        "passed": true,
+        "tests": 114,
+        "subtests": 36,
+        "warnings": 1
+      },
+      "compileall_project": {
+        "passed": true
+      },
+      "ai_generated": {
+        "passed": true,
+        "tests": 1
+      },
+      "real_db_20": {
+        "passed": true
+      }
+    },
+    "fixes": {
+      "ocr_install_hint": true,
+      "ocr_missing_dependency_detail": true,
+      "pagination_total_full_count_regression": true,
+      "job_id_not_file_name": true,
+      "file_name_job_id_rejected": true,
+      "job_metadata_persistence": true,
+      "result_page_404_friendly": true,
+      "service_restart_job_preview": true,
+      "no_absolute_output_path_in_metadata": true
+    },
+    "frontend_browser_flow": {
+      "passed": true,
+      "initial_total": 7584,
+      "initial_page": "第 1 / 380 页",
+      "initial_rows": 20,
+      "ocr_available": false,
+      "skip_ocr_checked_disabled": true,
+      "job_id": "job_20260701_114243_49763acb",
+      "job_status": "success",
+      "preview_headers": 26,
+      "preview_rows": 1,
+      "restart_still_success": true,
+      "restart_preview_headers": 26,
+      "restart_preview_rows": 1,
+      "download_workbook_sheet_count": 6,
+      "download_workbook_headers": 26,
+      "console_errors": []
+    },
+    "artifact_notes": {
+      "real_db_20_result_dir": "reports/web_fix_persistent_job_20260701_113409",
+      "commit_artifacts": false,
+      "preexisting_untracked": "Q57D2088.tmp"
+    }
   }
 }

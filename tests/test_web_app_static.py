@@ -74,6 +74,8 @@ class WebAppStaticTests(unittest.TestCase):
         self.assertIn("/preview", source)
         self.assertIn("download_url", source)
         self.assertIn("textContent", source)
+        self.assertIn("任务不存在或已过期", source)
+        self.assertIn("error.status === 404", source)
 
 
 if __name__ == "__main__":

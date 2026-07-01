@@ -25,8 +25,21 @@ class OcrStatusAndImageRiskTests(unittest.TestCase):
 
         self.assertFalse(payload["ocr_available"])
         self.assertIn("ocr_status_reason", payload)
+        self.assertIn("ocr_install_hint", payload)
         self.assertIn("OCR", payload["ocr_status_reason"])
         self.assertNotIn("sk-", str(payload))
+
+    def test_get_ocr_status_reports_missing_dependencies_without_raising(self):
+        from image_ocr import get_ocr_status
+
+        with patch("image_ocr.importlib.util.find_spec", return_value=None):
+            payload = get_ocr_status()
+
+        self.assertFalse(payload["available"])
+        self.assertEqual(payload["engine"], "none")
+        self.assertIn("paddleocr", payload["reason"])
+        self.assertIn("paddlepaddle", payload["reason"])
+        self.assertIn("外部 OCR 文本", payload["install_hint"])
 
     def test_image_table_risk_message_when_images_without_table_or_ocr(self):
         from confidence import calculate_ocr_risk_score

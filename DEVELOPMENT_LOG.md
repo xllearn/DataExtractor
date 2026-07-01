@@ -359,3 +359,46 @@
 - 真实数据库测试产物位于 `reports/web_fix_real_20_20260701_105540/`，包含真实 URL、日志和 Excel，仅作本地验收证据，不提交。
 - 前端服务验证产物位于 ignored 的 `logs/web_fix_frontend/`、`outputs/web_fix_frontend/`，不提交。
 - 未跟踪的 `Q57D2088.tmp` 在本轮开始前已存在，仍未纳入提交。
+
+## 2026-07-01 续 10
+
+### 本轮目标
+
+继续修复截图中的三个核心问题：OCR 状态仍不清晰、真实库分页 total 不能退化为 20、生成 Excel 后结果页显示 `Not Found` 或把文件名当作 job_id。
+
+### 已完成
+
+- `image_ocr.py` 的 `get_ocr_status()` 现在分别检测 `paddleocr` 和 `paddlepaddle/paddle`，返回 `available`、`engine`、`reason`、`install_hint`，导入失败不会影响 API 启动。
+- `/api/config/status` 增加 `ocr_install_hint`，前端可明确提示安装 PaddleOCR 或使用外部 OCR 文本 fallback。
+- `/api/extract` 改为生成稳定的 `job_YYYYMMDD_HHMMSS_xxxxxxxx`，不再把 Excel 文件名当作 job_id。
+- job 创建、运行、成功、失败都会写入 `outputs/web/jobs/<job_id>.json`，metadata 只保存前端需要的公开字段，不包含本地绝对路径。
+- `/api/jobs/{job_id}` 先查内存，再查 metadata 文件；服务重启后仍可查询已完成 job。
+- `/api/jobs/{job_id}/preview` 根据 metadata 中的 `file_id` 定位 Excel，仍只预览 `结果数据` sheet 的固定 26 列和最多 100 行。
+- 结果页 404 时显示“任务不存在或已过期，请返回列表重新生成。”，不再裸露 `Not Found`。
+- 新增回归测试覆盖：真实 total 不等于当前页长度、非法文件名 job_id 404、job metadata 跨 app 重建可用、OCR 安装提示和结果页 404 文案。
+- `.gitignore` 增加 `reports/web_fix_persistent_job_*/`，真实库验收产物继续仅保留本地。
+
+### 已验证
+
+- 聚焦回归：`py -m unittest tests.test_api_server.ApiServerTests.test_articles_total_is_full_count_not_current_page_length tests.test_api_server.ApiServerTests.test_successful_job_metadata_survives_app_recreation -v`，2 tests OK。
+- OCR/结果页聚焦：`py -m unittest tests.test_ocr_status_and_image_risk.OcrStatusAndImageRiskTests.test_get_ocr_status_reports_missing_dependencies_without_raising tests.test_web_app_static.WebAppStaticTests.test_result_page_calls_job_and_preview_apis -v`，2 tests OK。
+- 局部回归：`py -m unittest tests.test_api_server tests.test_ocr_status_and_image_risk tests.test_web_app_static tests.test_configured_db_and_fields -v`，44 tests OK。
+- 全量 `unittest`：`py -m unittest discover -s tests -v`，114 tests OK。
+- `pytest`：`py -m pytest -q`，114 passed，36 subtests passed，1 个 FastAPI/Starlette deprecation warning。
+- `compileall`：`py -m compileall -q -x "..." .`，通过，退出码 0。
+- AI 生成数据测试：`py -m unittest tests.test_ai_generated_cases -v`，1 test OK。
+- 真实数据库 20 条：`py scripts\run_real_db_20.py --result-dir reports/web_fix_persistent_job_20260701_113409`，`passed=True`。
+- 前端真实页面验证：
+  - API 启动在 `http://127.0.0.1:8015/`。
+  - 首页显示数据库和 LLM 已配置、OCR 不可用；初始 `total=7584`，`第 1 / 380 页`，20 行数据，不再是 `总计 20 条`。
+  - 选择 1 条生成 Excel 后跳转到 `/web/result.html?job_id=job_20260701_114243_49763acb`。
+  - 结果页显示 `生成成功`，preview headers=26，preview rows=1，下载按钮可用，控制台无错误。
+  - 重启 API 后同一 job_id 仍可通过 metadata 查询，结果页仍显示成功并能预览。
+  - 下载的 Excel 包含 6 个 sheet，`结果数据` 表头 26 列。
+
+### 注意事项
+
+- 本轮未发现阻断推送的 P0/P1。
+- 本轮不提交 `.env`、`logs/`、`outputs/`、真实数据库连接串、真实 API Key 或真实测试 Excel。
+- 真实库验收目录 `reports/web_fix_persistent_job_20260701_113409/` 已被忽略，不纳入提交。
+- 未跟踪的 `Q57D2088.tmp` 在本轮开始前已存在，仍未纳入提交。

@@ -36,7 +36,10 @@ async function fetchJson(url) {
     payload = {detail: text || response.statusText || "请求失败"};
   }
   if (!response.ok) {
-    throw new Error(String(payload.detail || payload.error || "请求失败"));
+    const error = new Error(String(payload.detail || payload.error || "请求失败"));
+    error.status = response.status;
+    error.errorType = payload.error_type || "";
+    throw error;
   }
   return payload;
 }
@@ -80,7 +83,7 @@ async function pollJob() {
     const job = await fetchJson(`/api/jobs/${encodeURIComponent(jobId)}`);
     setText(elements.statusText, job.message || job.status);
     if (!job.ocr_available) {
-      setText(elements.riskText, "本次未成功 OCR，结果可能缺少图片中的保障责任表。");
+      setText(elements.riskText, "本次未使用 OCR，图片表格内容可能缺失。");
     }
     if (job.external_ocr_used) {
       setText(elements.riskText, "使用了外部 OCR 文本");
@@ -100,7 +103,11 @@ async function pollJob() {
     }
     window.setTimeout(pollJob, 1000);
   } catch (error) {
-    setText(elements.statusText, error.message);
+    if (error.status === 404 || error.errorType === "JobNotFound") {
+      setText(elements.statusText, "任务不存在或已过期，请返回列表重新生成。");
+    } else {
+      setText(elements.statusText, error.message);
+    }
     elements.statusText.className = "error";
   }
 }

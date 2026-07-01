@@ -1,9 +1,12 @@
+import json
 import logging
+import re
 import subprocess
 import sys
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timezone
 from pathlib import Path
 from threading import Lock
 from typing import Callable, List, Optional
@@ -25,6 +28,7 @@ from utils import ensure_dir
 
 
 MAX_SELECTED = 50
+JOB_ID_RE = re.compile(r"^job_[A-Za-z0-9_-]+$")
 LOGGER = logging.getLogger(__name__)
 
 
@@ -93,6 +97,65 @@ def _article_summary(record: dict) -> dict:
         "region": str(record.get("areaname") or record.get("province") or ""),
         "insurance_type": str(record.get("insurancetypename") or ""),
     }
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _new_job_id() -> str:
+    return f"job_{datetime.now():%Y%m%d_%H%M%S}_{uuid.uuid4().hex[:8]}"
+
+
+def _job_not_found() -> ApiError:
+    return ApiError(404, "任务不存在或已过期，请返回列表重新生成。", "JobNotFound")
+
+
+def _job_metadata_path(output_dir: Path, job_id: str) -> Path:
+    if not JOB_ID_RE.fullmatch(job_id or ""):
+        raise _job_not_found()
+    return output_dir / "jobs" / f"{job_id}.json"
+
+
+def _public_job_payload(job: dict) -> dict:
+    file_id = str(job.get("file_id") or "")
+    job_id = str(job.get("job_id") or "")
+    payload = {
+        "job_id": job_id,
+        "status": str(job.get("status") or ""),
+        "message": str(job.get("message") or ""),
+        "file_id": file_id,
+        "download_url": str(job.get("download_url") or (f"/api/download/{quote(file_id, safe='')}" if file_id else "")),
+        "preview_url": str(job.get("preview_url") or (f"/api/jobs/{job_id}/preview" if job_id else "")),
+        "error": mask_sensitive_text(str(job.get("error") or "")),
+        "ocr_available": bool(job.get("ocr_available")),
+        "external_ocr_used": bool(job.get("external_ocr_used")),
+        "created_at": str(job.get("created_at") or ""),
+        "updated_at": str(job.get("updated_at") or ""),
+    }
+    return payload
+
+
+def _write_job_metadata(output_dir: Path, job: dict) -> None:
+    path = _job_metadata_path(output_dir, str(job.get("job_id") or ""))
+    ensure_dir(path.parent)
+    payload = _public_job_payload(job)
+    temp_path = path.with_suffix(".json.tmp")
+    temp_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    temp_path.replace(path)
+
+
+def _read_job_metadata(output_dir: Path, job_id: str) -> dict:
+    path = _job_metadata_path(output_dir, job_id)
+    if not path.exists():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        raise ApiError(500, f"job metadata 读取失败: {exc}", "JobMetadataReadError") from exc
+    if not isinstance(payload, dict) or payload.get("job_id") != job_id:
+        raise ApiError(500, "job metadata 格式无效", "JobMetadataInvalid")
+    return payload
 
 
 def _default_record_provider(config_path: str):
@@ -294,6 +357,7 @@ def create_app(
             "llm_configured": bool(settings.llm_api_key),
             "ocr_available": bool(ocr_status.get("available")),
             "ocr_status_reason": mask_sensitive_text(str(ocr_status.get("reason") or "")),
+            "ocr_install_hint": mask_sensitive_text(str(ocr_status.get("install_hint") or "")),
             "ocr_engine": str(ocr_status.get("engine") or "none"),
             "config_path": _display_config_path(config_path),
             "database_status_reason": reason,
@@ -325,24 +389,31 @@ def create_app(
             raise ApiError(400, "mode 只能是 single 或 merge", "ValidationError")
         if uses_default_runner:
             _ensure_database_ready(config_path)
-        job_id = f"job_{uuid.uuid4().hex[:12]}"
+        now = _now_iso()
+        job_id = _new_job_id()
         with jobs_lock:
             jobs[job_id] = {
                 "job_id": job_id,
                 "status": "queued",
                 "message": "任务已排队",
+                "file_id": "",
                 "download_url": "",
                 "preview_url": "",
                 "error": "",
                 "output_path": None,
                 "ocr_available": get_ocr_status().get("available"),
                 "external_ocr_used": bool(request.external_ocr_text.strip()),
+                "created_at": now,
+                "updated_at": now,
             }
+            _write_job_metadata(output_root, jobs[job_id])
 
         def run_job() -> None:
             with jobs_lock:
                 jobs[job_id]["status"] = "running"
                 jobs[job_id]["message"] = "生成中"
+                jobs[job_id]["updated_at"] = _now_iso()
+                _write_job_metadata(output_root, jobs[job_id])
             try:
                 output_path = _call_runner(runner, selected, request.mode, request.no_ocr, request.no_llm, request.external_ocr_text)
                 file_id = output_path.name
@@ -351,14 +422,25 @@ def create_app(
                         {
                             "status": "success",
                             "message": "生成成功",
+                            "file_id": file_id,
                             "download_url": f"/api/download/{quote(file_id, safe='')}",
                             "preview_url": f"/api/jobs/{job_id}/preview",
                             "output_path": output_path,
+                            "updated_at": _now_iso(),
                         }
                     )
+                    _write_job_metadata(output_root, jobs[job_id])
             except Exception as exc:
                 with jobs_lock:
-                    jobs[job_id].update({"status": "failed", "message": "生成失败", "error": mask_sensitive_text(str(exc))})
+                    jobs[job_id].update(
+                        {
+                            "status": "failed",
+                            "message": "生成失败",
+                            "error": mask_sensitive_text(str(exc)),
+                            "updated_at": _now_iso(),
+                        }
+                    )
+                    _write_job_metadata(output_root, jobs[job_id])
 
         executor.submit(run_job)
         return {
@@ -373,27 +455,25 @@ def create_app(
         with jobs_lock:
             job = dict(jobs.get(job_id) or {})
         if not job:
-            raise ApiError(404, "job 不存在", "JobNotFound")
-        return {
-            "job_id": job["job_id"],
-            "status": job["status"],
-            "message": job.get("message", ""),
-            "download_url": job.get("download_url", ""),
-            "preview_url": job.get("preview_url", ""),
-            "error": job.get("error", ""),
-            "ocr_available": bool(job.get("ocr_available")),
-            "external_ocr_used": bool(job.get("external_ocr_used")),
-        }
+            job = _read_job_metadata(output_root, job_id)
+        if not job:
+            raise _job_not_found()
+        return _public_job_payload(job)
 
     @app.get("/api/jobs/{job_id}/preview")
     def job_preview(job_id: str):
         with jobs_lock:
             job = dict(jobs.get(job_id) or {})
         if not job:
-            raise ApiError(404, "job 不存在", "JobNotFound")
+            job = _read_job_metadata(output_root, job_id)
+        if not job:
+            raise _job_not_found()
         if job.get("status") != "success":
             raise ApiError(400, "job 尚未完成，不能预览", "JobNotReady")
-        return _preview_workbook(Path(job.get("output_path")))
+        file_id = str(job.get("file_id") or "")
+        if not file_id and job.get("output_path"):
+            file_id = Path(str(job.get("output_path"))).name
+        return _preview_workbook(_safe_download_path(output_root, file_id))
 
     @app.get("/api/download/{file_id:path}")
     def download(file_id: str):

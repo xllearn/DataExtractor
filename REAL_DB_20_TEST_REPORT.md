@@ -410,3 +410,27 @@ py main.py --config logs/real_db_20/db_config.runtime.yml --field-config config/
 
 - 本轮未发现阻断推送的 P0/P1。
 - 真实数据产物和服务日志仅作本地验收证据，不纳入 Git 提交。
+
+## 17. 2026-07-01 持久化 job 与结果页重启复测
+
+### 17.1 真实 20 条批量生成
+
+- 命令：`py scripts\run_real_db_20.py --result-dir reports\web_fix_persistent_job_20260701_113409`。
+- 运行结果：通过，`passed=True`，退出码 0。
+- 数据来源：`logs/real_db_20/db_config.runtime.yml`，按真实库随机 20 条流程生成。
+- 结论：真实 20 条生成仍可通过，未遇到 LLM 429；产物目录仅作本地验收证据，不提交。
+
+### 17.2 前端真实页面 1 条生成与重启验证
+
+- API 启动：`py api_server.py --host 127.0.0.1 --port 8015 --config logs/real_db_20/db_config.runtime.yml --field-config config/field_mapping.yml --llm-config config/llm_config.yml`。
+- 首页状态：数据库已配置，LLM 已配置，OCR 不可用；`total=7584`，`第 1 / 380 页`，20 行数据。
+- 生成验证：选择 1 条后生成 job `job_20260701_114243_49763acb`，结果页显示 `生成成功`。
+- 结果页校验：preview headers=26，preview rows=1，下载按钮可见，无浏览器控制台错误。
+- metadata 校验：`outputs/web/jobs/job_20260701_114243_49763acb.json` 存在，status 为 `success`，保存 `file_id`，不包含本地绝对输出路径。
+- 重启校验：API 重启后访问同一 job 仍返回 `success`，preview headers=26，preview rows=1，结果页不再显示 `Not Found`。
+- 下载校验：下载文件包含 6 个 sheet，`结果数据` 表头 26 列。
+
+### 17.3 结论
+
+- 本轮未发现阻断推送的 P0/P1。
+- 前端 total 不再退化为 20，job_id 不再使用 Excel 文件名，结果页可跨 API 重启读取已完成 job。
