@@ -19,6 +19,11 @@ BASE_COLUMNS = ["Title", "Content", "AuditTime", "areaname", "SourceURL", "insur
 TRACE_COLUMNS = ["source", "batch_id"]
 
 
+def is_test_table_name(table: str) -> bool:
+    name = str(table or "").split(".")[-1].lower()
+    return name == "image_import_articles" or name.startswith("test_") or name.endswith("_test")
+
+
 def _create_table_if_needed(engine, table: str) -> None:
     validate_table_name(table)
     metadata = MetaData()
@@ -66,12 +71,18 @@ def import_records_to_db(
     records: List[Dict[str, Any]],
     dry_run: bool = True,
     create_table: bool = False,
+    force_production_table: bool = False,
 ) -> Dict[str, Any]:
     if not database_url:
         raise ValueError("database_url 不能为空")
     if not records:
         raise ValueError("records 不能为空")
     validate_table_name(target_table)
+    if not force_production_table and not is_test_table_name(target_table):
+        raise ValueError(
+            "target_table 看起来不是测试表；请使用 image_import_articles、test_* 或 *_test，"
+            "如确需写入真实表请传 --force-production-table"
+        )
     engine = create_engine(database_url)
     try:
         if create_table:
@@ -137,6 +148,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--result-output", default="logs/image_import/import_result.json")
     parser.add_argument("--create-table", action="store_true")
     parser.add_argument("--execute", action="store_true", help="真正写入数据库；默认 dry-run")
+    parser.add_argument("--force-production-table", action="store_true", help="允许写入非测试表；请谨慎使用")
     return parser
 
 
@@ -144,7 +156,14 @@ def main() -> int:
     args = build_parser().parse_args()
     database_url = args.database_url or __import__("os").environ.get("DATABASE_URL", "")
     records = load_image_records(args.image, transcript_path=args.transcript or None, output_json=args.parsed_output, batch_id=args.batch_id)
-    result = import_records_to_db(database_url, args.target_table, records, dry_run=not args.execute, create_table=args.create_table)
+    result = import_records_to_db(
+        database_url,
+        args.target_table,
+        records,
+        dry_run=not args.execute,
+        create_table=args.create_table,
+        force_production_table=args.force_production_table,
+    )
     output = Path(args.result_output)
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(result, ensure_ascii=False, indent=2, default=str), encoding="utf-8")

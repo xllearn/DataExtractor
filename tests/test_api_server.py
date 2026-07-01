@@ -39,7 +39,7 @@ class ApiServerTests(unittest.TestCase):
             return rows[offset : offset + limit]
 
         def runner(selected_ids, mode, no_ocr, no_llm):
-            output = output_dir / "web_result.xlsx"
+            output = output_dir / "商业补充保险抽取结果.xlsx"
             write_extraction_workbook(
                 [{"info_id": "INFO-1", "地区名称": "陕西省-西安市", "病种名称": "类风湿性关节炎"}],
                 output,
@@ -69,6 +69,7 @@ class ApiServerTests(unittest.TestCase):
             extract = client.post("/api/extract", json={"selected_ids": ["1"], "mode": "merge", "no_ocr": True}).json()
             self.assertEqual(extract["status"], "success")
             self.assertTrue(extract["download_url"].startswith("/api/download/"))
+            self.assertIn("%", extract["download_url"])
             self.assertNotIn(str(Path(tmp)), str(extract))
 
             download = client.get(extract["download_url"])
@@ -87,6 +88,103 @@ class ApiServerTests(unittest.TestCase):
             self.assertIn("selected_ids", empty.text)
             self.assertEqual(too_many.status_code, 400)
             self.assertEqual(traversal.status_code, 400)
+
+    def test_config_status_reports_safe_to_query_without_secrets(self):
+        from api_server import create_app
+
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = Path(tmp) / "db_config.yml"
+            config_path.write_text(
+                """
+database:
+  url: "mysql+pymysql://user:secret@127.0.0.1:3306/db?charset=utf8mb4"
+source:
+  table: ""
+""",
+                encoding="utf-8",
+            )
+            client = TestClient(create_app(config_path=str(config_path), output_dir=Path(tmp) / "out", log_dir=Path(tmp) / "logs"))
+
+            response = client.get("/api/config/status")
+            payload = response.json()
+
+            self.assertEqual(response.status_code, 200)
+            self.assertFalse(payload["database_configured"])
+            self.assertFalse(payload["safe_to_query"])
+            self.assertIn("database_status_reason", payload)
+            self.assertIn("config_path", payload)
+            self.assertNotIn("secret", str(payload))
+            self.assertNotIn("mysql+pymysql://user:secret", str(payload))
+
+    def test_articles_database_not_configured_returns_json_error(self):
+        from api_server import create_app
+
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = Path(tmp) / "db_config.yml"
+            config_path.write_text(
+                """
+database:
+  url: ""
+source:
+  table: ""
+""",
+                encoding="utf-8",
+            )
+            client = TestClient(
+                create_app(config_path=str(config_path), output_dir=Path(tmp) / "out", log_dir=Path(tmp) / "logs"),
+                raise_server_exceptions=False,
+            )
+
+            response = client.get("/api/articles?keyword=test")
+            payload = response.json()
+
+            self.assertEqual(response.status_code, 400)
+            self.assertEqual(response.headers["content-type"].split(";")[0], "application/json")
+            self.assertEqual(payload["error_type"], "DatabaseNotConfigured")
+            self.assertIn("detail", payload)
+
+    def test_articles_provider_exception_returns_masked_json(self):
+        from api_server import create_app
+
+        def provider(**_kwargs):
+            raise RuntimeError("DATABASE_URL=mysql+pymysql://user:secret@127.0.0.1/db password=abc sk-test-token")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            client = TestClient(
+                create_app(record_provider=provider, output_dir=Path(tmp) / "out", log_dir=Path(tmp) / "logs"),
+                raise_server_exceptions=False,
+            )
+
+            response = client.get("/api/articles?keyword=test")
+            payload = response.json()
+
+            self.assertEqual(response.status_code, 500)
+            self.assertEqual(response.headers["content-type"].split(";")[0], "application/json")
+            self.assertEqual(payload["error_type"], "RuntimeError")
+            self.assertNotIn("secret", str(payload))
+            self.assertNotIn("abc", str(payload))
+            self.assertNotIn("sk-test-token", str(payload))
+
+    def test_extract_runner_exception_returns_masked_json(self):
+        from api_server import create_app
+
+        def runner(*_args, **_kwargs):
+            raise RuntimeError("extract failed password=abc sk-test-token")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            client = TestClient(
+                create_app(extract_runner=runner, output_dir=Path(tmp) / "out", log_dir=Path(tmp) / "logs"),
+                raise_server_exceptions=False,
+            )
+
+            response = client.post("/api/extract", json={"selected_ids": ["1"], "mode": "merge"})
+            payload = response.json()
+
+            self.assertEqual(response.status_code, 500)
+            self.assertEqual(response.headers["content-type"].split(";")[0], "application/json")
+            self.assertEqual(payload["error_type"], "ExtractFailed")
+            self.assertNotIn("abc", str(payload))
+            self.assertNotIn("sk-test-token", str(payload))
 
 
 if __name__ == "__main__":

@@ -49,13 +49,27 @@ direct_field_columns:
     return path
 
 
-def run_image_import_test(result_dir: Path, image: str, manual: str, table: str, batch_id: str) -> dict:
+def run_image_import_test(result_dir: Path, image: str, manual: str, table: str, batch_id: str, force_production_table: bool = False) -> dict:
     parsed_json = result_dir / "image_import" / "parsed_image_data.json"
     records = load_image_records(image, transcript_path=manual, output_json=parsed_json, batch_id=batch_id)
     db_config = load_db_config("config/db_config.yml")
     database_url = os.environ.get("DATABASE_URL") or db_config.database_url
-    import_dry_run = import_records_to_db(database_url, table, records, dry_run=True, create_table=True)
-    import_result = import_records_to_db(database_url, table, records, dry_run=False, create_table=True)
+    import_dry_run = import_records_to_db(
+        database_url,
+        table,
+        records,
+        dry_run=True,
+        create_table=True,
+        force_production_table=force_production_table,
+    )
+    import_result = import_records_to_db(
+        database_url,
+        table,
+        records,
+        dry_run=False,
+        create_table=True,
+        force_production_table=force_production_table,
+    )
     runtime_config = _write_runtime_config(result_dir / "image_import" / "db_config.image_import.yml", table)
     output_dir = result_dir / "image_import" / "outputs"
     log_dir = result_dir / "image_import" / "logs"
@@ -129,16 +143,24 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="运行图片导入、入库、抽取和人工 Excel 对比测试")
     parser.add_argument("--result-dir", required=True)
     parser.add_argument("--image", default="samples/db/陕西西安.jpeg")
-    parser.add_argument("--manual", default="samples/manual/陕西西安.xlsx")
+    parser.add_argument("--manual", "--manual-excel", dest="manual", default="samples/manual/陕西西安.xlsx")
     parser.add_argument("--target-table", default="image_import_articles")
     parser.add_argument("--batch-id", default="")
+    parser.add_argument("--force-production-table", action="store_true")
     return parser
 
 
 def main() -> int:
     args = build_parser().parse_args()
     batch_id = args.batch_id or f"image_import_{__import__('datetime').datetime.now().strftime('%Y%m%d_%H%M%S')}"
-    report = run_image_import_test(Path(args.result_dir), args.image, args.manual, args.target_table, batch_id)
+    report = run_image_import_test(
+        Path(args.result_dir),
+        args.image,
+        args.manual,
+        args.target_table,
+        batch_id,
+        force_production_table=args.force_production_table,
+    )
     print(f"overall_similarity={report['compare']['overall_similarity']:.6f}")
     print(f"core_field_similarity={report['compare']['core_field_similarity']:.6f}")
     print(f"passed={report['passed']}")

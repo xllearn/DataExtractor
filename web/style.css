@@ -56,6 +56,12 @@ a#downloadLink {
   cursor: pointer;
 }
 
+button:disabled,
+input:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
 table {
   width: 100%;
   border-collapse: collapse;
@@ -78,4 +84,9 @@ th {
 
 .error {
   color: #b42318;
+}
+
+.empty {
+  color: #697586;
+  text-align: center;
 }

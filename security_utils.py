@@ -31,6 +31,7 @@ def mask_database_url(url: str) -> str:
 
 def mask_sensitive_text(value: str) -> str:
     text = "" if value is None else str(value)
+    text = re.sub(r"([A-Za-z0-9+.-]+://[^:/@\s]+):([^@\s]+)@", r"\1:***@", text)
     text = re.sub(r"([A-Za-z_]*(?:API_KEY|TOKEN|PASSWORD|SECRET|Authorization|api_key|password|token|secret)[A-Za-z_]*\s*[=:]\s*)([^\s,;]+)", r"\1***", text, flags=re.IGNORECASE)
     text = re.sub(r"(Bearer\s+)([A-Za-z0-9._\-]+)", r"\1***", text, flags=re.IGNORECASE)
     text = re.sub(r"sk-[A-Za-z0-9_-]+", "sk-***", text)

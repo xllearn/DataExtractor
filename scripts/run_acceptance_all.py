@@ -29,6 +29,7 @@ def _write_markdown(result_dir: Path, report: dict) -> Path:
     ]
     for item in report["commands"]:
         lines.append(f"- {item['name']}: passed={item['passed']}, returncode={item['returncode']}, log={item['log_path']}")
+    image_import = report["image_import"]
     lines.extend(
         [
             "",
@@ -40,9 +41,11 @@ def _write_markdown(result_dir: Path, report: dict) -> Path:
             f"- 20 rows passed: `{report['real_db_20']['passed']}`",
             "",
             "## Image Import",
-            f"- passed: `{report['image_import']['passed']}`",
-            f"- overall_similarity: `{report['image_import']['compare']['overall_similarity']}`",
-            f"- core_field_similarity: `{report['image_import']['compare']['core_field_similarity']}`",
+            f"- passed: `{image_import.get('passed')}`",
+            f"- skipped: `{image_import.get('skipped', False)}`",
+            f"- reason: `{image_import.get('reason', '')}`",
+            f"- overall_similarity: `{image_import.get('compare', {}).get('overall_similarity', 0)}`",
+            f"- core_field_similarity: `{image_import.get('compare', {}).get('core_field_similarity', 0)}`",
             "",
             "## Frontend API",
             "- Covered by `tests.test_api_server` in unittest/pytest.",
@@ -52,7 +55,18 @@ def _write_markdown(result_dir: Path, report: dict) -> Path:
     return path
 
 
-def run_acceptance(result_dir: Path, skip_real_db: bool = False, skip_image_import: bool = False) -> dict:
+def _skipped_image_import(reason: str) -> dict:
+    return {"passed": True, "skipped": True, "reason": reason, "compare": {"overall_similarity": 0, "core_field_similarity": 0}}
+
+
+def run_acceptance(
+    result_dir: Path,
+    skip_real_db: bool = False,
+    skip_image_import: bool = False,
+    image: str = "",
+    manual_excel: str = "",
+    image_import_table: str = "image_import_articles",
+) -> dict:
     result_dir.mkdir(parents=True, exist_ok=True)
     compile_exclude = r"(^|[\\/])(\.git|\.pytest_cache|\.venv|\.venv_ocr|__pycache__|logs|outputs|temp_images|db_to_excel_extractor|tmp_ai_debug)([\\/]|$)"
     commands = [
@@ -67,9 +81,14 @@ def run_acceptance(result_dir: Path, skip_real_db: bool = False, skip_image_impo
     if not skip_real_db:
         real_smoke = run_real_db_case(3, result_dir, "real_db_smoke", "logs/real_db_20/db_config.runtime.yml", "logs/real_db_20/selected_ids.txt", no_ocr=True)
         real_20 = run_real_db_case(20, result_dir, "real_db_20", "logs/real_db_20/db_config.runtime.yml", "logs/real_db_20/selected_ids.txt", no_ocr=True)
-    image_import = {"passed": False, "skipped": True, "compare": {"overall_similarity": 0, "core_field_similarity": 0}}
+    image_import = _skipped_image_import("skip_image_import enabled")
     if not skip_image_import:
-        image_import = run_image_import_test(result_dir, "samples/db/陕西西安.jpeg", "samples/manual/陕西西安.xlsx", "image_import_articles", "")
+        if not image or not manual_excel:
+            image_import = _skipped_image_import("image/manual_excel not provided")
+        elif not Path(image).exists() or not Path(manual_excel).exists():
+            image_import = _skipped_image_import("image or manual_excel file not found")
+        else:
+            image_import = run_image_import_test(result_dir, image, manual_excel, image_import_table, "")
     report = {
         "result_dir": str(result_dir),
         "commands": commands,
@@ -90,13 +109,23 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--result-dir", default="")
     parser.add_argument("--skip-real-db", action="store_true")
     parser.add_argument("--skip-image-import", action="store_true")
+    parser.add_argument("--image", default="")
+    parser.add_argument("--manual-excel", default="")
+    parser.add_argument("--image-import-table", default="image_import_articles")
     return parser
 
 
 def main() -> int:
     args = build_parser().parse_args()
     result_dir = Path(args.result_dir) if args.result_dir else desktop_result_dir()
-    report = run_acceptance(result_dir, skip_real_db=args.skip_real_db, skip_image_import=args.skip_image_import)
+    report = run_acceptance(
+        result_dir,
+        skip_real_db=args.skip_real_db,
+        skip_image_import=args.skip_image_import,
+        image=args.image,
+        manual_excel=args.manual_excel,
+        image_import_table=args.image_import_table,
+    )
     print(json.dumps({"result_dir": report["result_dir"], "overall_passed": report["overall_passed"]}, ensure_ascii=False))
     return 0 if report["overall_passed"] else 1
 

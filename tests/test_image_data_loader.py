@@ -97,6 +97,56 @@ class ImageDataImportTests(unittest.TestCase):
             self.assertEqual(inserted["records"][0]["SourceURL"], "image-import://case-1")
             self.assertEqual(inserted["batch_id"], "batch-test")
 
+    def _minimal_records(self):
+        return [
+            {
+                "Title": "image import test",
+                "Content": "<p>policy</p>",
+                "AuditTime": "2026-05-20",
+                "areaname": "region",
+                "SourceURL": "image-import://case-1",
+                "insurancetypename": "insurance",
+                "_batch_id": "batch-test",
+            }
+        ]
+
+    def test_image_import_allows_test_table_names_by_default(self):
+        from scripts.import_image_data_to_db import import_records_to_db
+
+        with tempfile.TemporaryDirectory() as tmp:
+            database_url = f"sqlite:///{(Path(tmp) / 'image_import.db').as_posix()}"
+
+            for table in ("image_import_articles", "test_articles", "articles_test"):
+                with self.subTest(table=table):
+                    result = import_records_to_db(database_url, table, self._minimal_records(), dry_run=True, create_table=True)
+                    self.assertEqual(result["target_table"], table)
+
+    def test_image_import_rejects_non_test_table_without_force(self):
+        from scripts.import_image_data_to_db import import_records_to_db
+
+        with tempfile.TemporaryDirectory() as tmp:
+            database_url = f"sqlite:///{(Path(tmp) / 'image_import.db').as_posix()}"
+
+            with self.assertRaisesRegex(ValueError, "force-production-table"):
+                import_records_to_db(database_url, "prod_articles", self._minimal_records(), dry_run=True, create_table=True)
+
+    def test_image_import_allows_non_test_table_with_force(self):
+        from scripts.import_image_data_to_db import import_records_to_db
+
+        with tempfile.TemporaryDirectory() as tmp:
+            database_url = f"sqlite:///{(Path(tmp) / 'image_import.db').as_posix()}"
+
+            result = import_records_to_db(
+                database_url,
+                "prod_articles",
+                self._minimal_records(),
+                dry_run=True,
+                create_table=True,
+                force_production_table=True,
+            )
+
+            self.assertEqual(result["target_table"], "prod_articles")
+
 
 if __name__ == "__main__":
     unittest.main()

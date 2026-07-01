@@ -35,3 +35,34 @@
 - Detailed generated artifacts were written to the desktop result directory, not the repository.
 - The raw `py -m compileall .` command traverses an ignored legacy virtual environment under `db_to_excel_extractor\.venv`; the acceptance runner excludes ignored runtime/output directories and compiles project code.
 - No real `.env`, logs, outputs, original image, manual Excel, database password or API key is included in this report.
+
+## 2026-07-01 Supplemental Web UI Fix
+
+- Overall status: passed.
+- Fixed the frontend JSON parse failure caused by plain-text backend 500 responses.
+- API errors now return JSON with `detail` and `error_type`.
+- `/api/config/status` now includes `config_path`, `database_status_reason` and `safe_to_query` without exposing secrets.
+- Frontend disables search, select-all and Excel generation when `safe_to_query=false`.
+- Frontend renders article rows with DOM APIs and `textContent`; source links are limited to `http://` and `https://`.
+- Image import database writes now default to test-table-only protection.
+- Acceptance scripts now support parameterized image/manual Excel paths and skip image import when local samples are not supplied.
+- Download URLs now URL-encode Chinese Excel file names.
+
+## 2026-07-01 Verification
+
+| Check | Result |
+| --- | --- |
+| `py -m unittest discover -s tests -v` | passed, 90 tests |
+| `py -m pytest -q` | passed, 90 tests, 33 subtests, 1 deprecation warning |
+| project `compileall` with ignored-dir excludes | passed |
+| real-config API health/status/articles/extract/download | passed |
+| bad-config API JSON error handling | passed |
+
+Manual API result:
+
+- Real config: `logs/real_db_20/db_config.runtime.yml`
+- `/api/config/status`: `database_configured=true`, `safe_to_query=true`
+- `/api/articles?limit=1&offset=0`: returned 1 item
+- `/api/extract`: success with one selected record and `no_llm=true`
+- `/api/download/...`: downloaded successfully; workbook contains 6 sheets
+- Bad config: `/api/articles?limit=1` returned `400 application/json` with `error_type=DatabaseNotConfigured`

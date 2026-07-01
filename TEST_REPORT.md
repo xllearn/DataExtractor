@@ -137,6 +137,58 @@ C:\Users\admin\AppData\Local\Programs\Python\Python314\python.exe -c "from openp
 
 - Excel sheet 验证结果：通过，包含且仅包含本次要求确认的 6 个 sheet：`结果数据`、`采集日志`、`字段证据`、`冲突证据`、`抽取评估`、`失败记录`。
 
+## 2026-07-01 Web 前端/API 错误处理修复测试补充
+
+### 修复范围
+
+- API 统一 JSON 错误响应，覆盖未捕获异常、`HTTPException`、数据库未配置和抽取失败。
+- `/api/config/status` 增加 `safe_to_query`、`database_status_reason`、`config_path`，并保持敏感信息脱敏。
+- 前端 `fetchJson()` 支持非 JSON 响应，不再出现 `Unexpected token 'I'... is not valid JSON`。
+- 前端数据库字段渲染改为 DOM API 和 `textContent`，避免 XSS；来源链接仅允许 `http://` / `https://`。
+- 图片入库默认保护测试表，非测试表必须显式 `--force-production-table`。
+- 综合验收脚本支持 `--image`、`--manual-excel`、`--image-import-table`，没有本地样本时跳过 image import。
+- 中文 Excel 文件名下载 URL 已做百分号编码。
+
+### 自动化验证
+
+```powershell
+py -m unittest discover -s tests -v
+py -m pytest -q
+py -m compileall -x "(^|[\\/])(\.git|\.pytest_cache|\.venv|\.venv_ocr|__pycache__|logs|outputs|temp_images|db_to_excel_extractor|tmp_ai_debug)([\\/]|$)" .
+```
+
+结果：
+
+- `unittest`：90 tests OK。
+- `pytest`：90 passed，33 subtests passed，1 个 FastAPI/Starlette deprecation warning。
+- `compileall`：通过，退出码 0。
+
+### 手动 API 验证
+
+真实配置启动：
+
+```powershell
+py api_server.py --host 127.0.0.1 --port 8000 --config logs/real_db_20/db_config.runtime.yml --field-config config/field_mapping.yml --llm-config config/llm_config.yml
+```
+
+验证结果：
+
+- `/api/health` 返回 `{"ok": true}`。
+- `/api/config/status` 返回 `database_configured=true`、`safe_to_query=true`、`config_path=logs/real_db_20/db_config.runtime.yml`。
+- `/api/articles?limit=1&offset=0` 返回 1 条记录。
+- `/api/extract` 使用 1 条记录、`no_ocr=true`、`no_llm=true` 生成成功。
+- 返回的 `download_url` 为 URL 编码路径，例如 `/api/download/%E5%95%86...xlsx`。
+- `/api/download/...` 下载成功，下载后的 Excel 包含 6 个 sheet。
+
+错误配置启动在 8010 端口时：
+
+- `/api/config/status` 返回 `database_configured=false`、`safe_to_query=false`、`database_status_reason=source.table 不能为空`。
+- `/api/articles?limit=1` 返回 `400 application/json`：
+
+```json
+{"detail":"数据库未配置，无法查询文章。请使用 --config 指定可用 db_config.yml：source.table 不能为空","error_type":"DatabaseNotConfigured"}
+```
+
 ## 病种名称质量修复补充记录
 
 - 确认时间：2026-06-30 15:16:22

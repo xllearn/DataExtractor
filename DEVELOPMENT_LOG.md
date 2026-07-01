@@ -205,3 +205,39 @@
 
 - 详细测试产物、真实输出 Excel、图片导入中间 JSON 和对比报告均写到桌面结果目录，不提交到 GitHub。
 - 仓库报告只保留脱敏汇总，不包含真实数据库密码、真实 API Key、真实图片原件或人工 Excel。
+
+## 2026-07-01 续 6
+
+### 本轮目标
+
+修复 Web 前端实际使用时出现的 `Unexpected token 'I', "Internal S"... is not valid JSON`，并增强 API 错误 JSON 化、前端安全渲染、图片入库测试表保护和综合验收脚本参数化。
+
+### 已完成
+
+- `api_server.py` 增加统一 JSON 错误处理：`ApiError`、`HTTPException` 和未捕获 `Exception` 均返回 JSON，不再返回裸文本 `Internal Server Error`。
+- `/api/config/status` 增加 `config_path`、`database_status_reason`、`safe_to_query`，不返回数据库 URL、密码、API Key 或 token。
+- `/api/articles` 在默认数据库配置不可用时提前返回 400 JSON，错误类型为 `DatabaseNotConfigured`。
+- `/api/extract` 对空选择、超过 50 条、非法 mode、配置错误和 runner 异常返回 JSON；错误内容经过脱敏。
+- `/api/extract` 返回的 `download_url` 对中文 Excel 文件名做 URL 编码，修复中文文件名下载失败。
+- `web/app.js` 修复 `fetchJson()`：先检查 `content-type`，非 JSON 响应包装为友好错误，不再抛 JSON parse 错误。
+- `web/app.js` 移除数据库字段渲染中的 `innerHTML`，改用 `document.createElement()` 和 `textContent`；来源链接仅允许 `http://` / `https://`。
+- 数据库 `safe_to_query=false` 时，前端禁用搜索、全选和生成 Excel，保留刷新按钮并显示空状态。
+- `scripts/import_image_data_to_db.py` 默认只允许写测试表：`image_import_articles`、`test_*`、`*_test`；非测试表必须传 `--force-production-table`。
+- `scripts/run_acceptance_all.py` 增加 `--image`、`--manual-excel`、`--image-import-table`；未提供图片和人工 Excel 时跳过 image import 并写明原因。
+- `scripts/run_image_import_test.py` 增加 `--manual-excel` 别名和 `--force-production-table`。
+- 新增/更新测试：API JSON 错误、配置状态脱敏、前端静态安全检查、图片入库表保护、验收脚本参数解析、中文下载 URL 编码。
+- 更新 `README.md`、`TEST_REPORT.md`、`reports/ACCEPTANCE_STAGE_13_15.md` 和 `reports/acceptance_stage_13_15.json`。
+
+### 已验证
+
+- `py -m unittest discover -s tests -v`：90 tests OK。
+- `py -m pytest -q`：90 passed，33 subtests passed，1 个 FastAPI/Starlette deprecation warning。
+- `py -m compileall -x "..." .`：通过，退出码 0。
+- 手动启动真实运行配置：`py api_server.py --host 127.0.0.1 --port 8000 --config logs/real_db_20/db_config.runtime.yml --field-config config/field_mapping.yml --llm-config config/llm_config.yml`。
+- 手动接口验证：`/api/config/status` 显示 `safe_to_query=true`，`/api/articles?limit=1` 返回 1 条，`/api/extract` 使用 `no_llm=true/no_ocr=true` 生成 Excel 成功，编码后的 `/api/download/...` 可下载，下载文件包含 6 个 sheet。
+- 错误配置验证：默认 `config/db_config.yml` 启动在 8010 端口时，`safe_to_query=false`，`/api/articles` 返回 400 JSON：`error_type=DatabaseNotConfigured`。
+
+### 注意事项
+
+- 本轮生成的 `outputs/web/manual_api_download_check.xlsx`、API 运行日志和真实输出 Excel 均在 ignored 目录内，不提交。
+- 未跟踪的 `Q57D2088.tmp` 在本轮开始前已存在，未纳入提交。

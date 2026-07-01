@@ -1,16 +1,18 @@
+import logging
+import subprocess
 import sys
 import time
-import subprocess
 from pathlib import Path
 from typing import Callable, List, Optional
+from urllib.parse import quote
 
-from fastapi import FastAPI, HTTPException, Query
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from config import PROJECT_ROOT, apply_llm_config, load_settings
-from config_loader import load_db_config, parse_selected_ids
+from config_loader import ConfigError, load_db_config, parse_selected_ids, validate_db_config_ready
 from db_reader import fetch_configured_records
 from keyword_utils import expand_keyword_groups
 from security_utils import mask_sensitive_text
@@ -18,6 +20,7 @@ from utils import ensure_dir
 
 
 MAX_SELECTED = 50
+LOGGER = logging.getLogger(__name__)
 
 
 class ExtractRequest(BaseModel):
@@ -25,6 +28,53 @@ class ExtractRequest(BaseModel):
     mode: str = "merge"
     no_ocr: bool = True
     no_llm: bool = False
+
+
+class ApiError(Exception):
+    def __init__(self, status_code: int, detail: str, error_type: str):
+        super().__init__(detail)
+        self.status_code = status_code
+        self.detail = mask_sensitive_text(detail)
+        self.error_type = error_type
+
+
+def _json_error(status_code: int, detail: object, error_type: str) -> JSONResponse:
+    if isinstance(detail, dict):
+        safe_detail: object = {str(key): mask_sensitive_text(str(value)) for key, value in detail.items()}
+    else:
+        safe_detail = mask_sensitive_text(str(detail or "请求失败"))
+    return JSONResponse(status_code=status_code, content={"detail": safe_detail, "error_type": error_type})
+
+
+def _display_config_path(config_path: str) -> str:
+    path = Path(config_path)
+    if not path.is_absolute():
+        return str(path).replace("\\", "/")
+    try:
+        return str(path.resolve().relative_to(PROJECT_ROOT)).replace("\\", "/")
+    except ValueError:
+        return path.name
+
+
+def _database_status(config_path: str) -> tuple[bool, str]:
+    try:
+        db_config = load_db_config(config_path)
+        if not db_config.exists:
+            return False, "数据库配置文件不存在，请使用 --config 指定可用 db_config.yml"
+        validate_db_config_ready(db_config)
+        return True, "数据库配置可用"
+    except ConfigError as exc:
+        return False, mask_sensitive_text(str(exc))
+
+
+def _ensure_database_ready(config_path: str) -> None:
+    safe, reason = _database_status(config_path)
+    if not safe:
+        raise ApiError(
+            400,
+            f"数据库未配置，无法查询文章。请使用 --config 指定可用 db_config.yml：{reason}",
+            "DatabaseNotConfigured",
+        )
 
 
 def _article_summary(record: dict) -> dict:
@@ -128,6 +178,8 @@ def create_app(
     log_root = Path(log_dir)
     if not log_root.is_absolute():
         log_root = PROJECT_ROOT / log_root
+    uses_default_provider = record_provider is None
+    uses_default_runner = extract_runner is None
     provider = record_provider or _default_record_provider(config_path)
     runner = extract_runner or _default_extract_runner(config_path, field_config_path, llm_config_path, output_root, log_root)
 
@@ -135,6 +187,21 @@ def create_app(
     web_dir = PROJECT_ROOT / "web"
     if web_dir.exists():
         app.mount("/web", StaticFiles(directory=web_dir), name="web")
+
+    @app.exception_handler(ApiError)
+    async def api_error_handler(_request: Request, exc: ApiError):
+        LOGGER.warning("API error %s: %s", exc.error_type, exc.detail)
+        return _json_error(exc.status_code, exc.detail, exc.error_type)
+
+    @app.exception_handler(HTTPException)
+    async def http_error_handler(_request: Request, exc: HTTPException):
+        return _json_error(exc.status_code, exc.detail, "HTTPException")
+
+    @app.exception_handler(Exception)
+    async def unhandled_error_handler(_request: Request, exc: Exception):
+        message = mask_sensitive_text(str(exc) or "Internal Server Error")
+        LOGGER.error("Unhandled API error %s: %s", exc.__class__.__name__, message)
+        return _json_error(500, message, exc.__class__.__name__)
 
     @app.get("/")
     def index():
@@ -154,11 +221,14 @@ def create_app(
             settings = apply_llm_config(settings, llm_config_path)
         except Exception:
             pass
-        db_config = load_db_config(config_path)
+        safe_to_query, reason = _database_status(config_path)
         return {
-            "database_configured": bool(db_config.use_configured_reader),
+            "database_configured": safe_to_query,
             "llm_configured": bool(settings.llm_api_key),
             "ocr_available": _ocr_available(),
+            "config_path": _display_config_path(config_path),
+            "database_status_reason": reason,
+            "safe_to_query": safe_to_query,
         }
 
     @app.get("/api/articles")
@@ -169,6 +239,8 @@ def create_app(
         offset: int = Query(default=0, ge=0),
     ):
         selected = parse_selected_ids(selected_ids)
+        if uses_default_provider:
+            _ensure_database_ready(config_path)
         rows = provider(keyword=keyword, selected_ids=selected, limit=limit, offset=offset)
         items = [_article_summary(row) for row in rows]
         return {"items": items, "total": len(items)}
@@ -177,20 +249,22 @@ def create_app(
     def extract(request: ExtractRequest):
         selected = [str(item).strip() for item in request.selected_ids if str(item).strip()]
         if not selected:
-            raise HTTPException(status_code=400, detail="selected_ids 不能为空")
+            raise ApiError(400, "selected_ids 不能为空", "ValidationError")
         if len(selected) > MAX_SELECTED:
-            raise HTTPException(status_code=400, detail=f"selected_ids 单次最多 {MAX_SELECTED} 条")
+            raise ApiError(400, f"selected_ids 单次最多 {MAX_SELECTED} 条", "ValidationError")
         if request.mode not in {"single", "merge"}:
-            raise HTTPException(status_code=400, detail="mode 只能是 single 或 merge")
+            raise ApiError(400, "mode 只能是 single 或 merge", "ValidationError")
+        if uses_default_runner:
+            _ensure_database_ready(config_path)
         try:
             output_path = Path(runner(selected, request.mode, request.no_ocr, request.no_llm))
         except Exception as exc:
-            raise HTTPException(status_code=500, detail=mask_sensitive_text(str(exc))) from exc
+            raise ApiError(500, mask_sensitive_text(str(exc)), "ExtractFailed") from exc
         file_id = output_path.name
         return {
             "job_id": output_path.stem,
             "status": "success",
-            "download_url": f"/api/download/{file_id}",
+            "download_url": f"/api/download/{quote(file_id, safe='')}",
             "output_path": file_id,
         }
 

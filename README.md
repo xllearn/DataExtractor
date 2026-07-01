@@ -495,3 +495,46 @@ IMAGE_BASE_URL=https://example.com
 ### 抽取结果比人工少怎么办？
 
 优先检查正文 HTML、表格和 OCR 是否完整，再查看 prompt 和 `logs/run.log`。如果图片里有关键待遇表，确认 OCR 已开启且图片可下载。必要时把人工样本中的拆分口径补充到提示词示例中。
+
+## 2026-07-01 Web API 和前端错误处理补充
+
+默认 `config/db_config.yml` 是模板配置，通常没有真实表名。直接运行 `py api_server.py --host 127.0.0.1 --port 8000` 时，如果没有配置好 `.env` 和 `config/db_config.yml`，页面会显示数据库未配置，并禁用搜索、全选和生成 Excel。
+
+真实使用前请指定可用配置：
+
+```powershell
+py api_server.py --host 127.0.0.1 --port 8000 --config logs/real_db_20/db_config.runtime.yml --field-config config/field_mapping.yml --llm-config config/llm_config.yml
+```
+
+打开：
+
+```text
+http://127.0.0.1:8000/
+```
+
+API 错误统一返回 JSON，例如数据库未配置时 `/api/articles` 返回：
+
+```json
+{
+  "detail": "数据库未配置，无法查询文章。请使用 --config 指定可用 db_config.yml：source.table 不能为空",
+  "error_type": "DatabaseNotConfigured"
+}
+```
+
+前端会先检查响应 `content-type`，后端即使返回非 JSON 文本也会显示友好错误，不再抛出 `Unexpected token 'I'... is not valid JSON`。文章表格使用 DOM API 和 `textContent` 渲染数据库字段，来源链接仅允许 `http://` 和 `https://`。
+
+当前 `/api/extract` 是同步模式，单次最多 50 条。生成时页面会禁用按钮并提示不要关闭页面；大批量建议使用 CLI，后续可升级为 job 队列。
+
+图片导入脚本默认只允许写入测试表：`image_import_articles`、`test_*`、`*_test`。如果确需写非测试表，必须显式传入：
+
+```powershell
+py scripts\import_image_data_to_db.py --image local\sample.jpeg --transcript local\manual.xlsx --target-table prod_articles --force-production-table
+```
+
+综合验收脚本的图片和人工 Excel 样本不再强依赖仓库内固定路径。需要跑 image import 时显式传入：
+
+```powershell
+py scripts\run_acceptance_all.py --result-dir "$env:USERPROFILE\Desktop\DataExtractor_test_results_YYYYMMDD_HHMMSS" --image local\sample.jpeg --manual-excel local\manual.xlsx --image-import-table image_import_articles
+```
+
+如果没有提供 `--image` 和 `--manual-excel`，综合验收会跳过 image import，并在报告中写明 skipped reason。

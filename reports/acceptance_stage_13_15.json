@@ -32,5 +32,30 @@
   },
   "frontend_api": {
     "passed": true
+  },
+  "supplemental_2026_07_01": {
+    "overall_passed": true,
+    "commands": {
+      "unittest": {"passed": true, "tests": 90},
+      "pytest": {"passed": true, "tests": 90, "subtests": 33, "warnings": 1},
+      "compileall_project": {"passed": true}
+    },
+    "web_ui_error_fix": {
+      "passed": true,
+      "unexpected_token_json_error_fixed": true,
+      "api_errors_return_json": true,
+      "safe_to_query_disables_frontend_actions": true,
+      "safe_dom_rendering": true,
+      "encoded_download_url": true
+    },
+    "manual_api": {
+      "real_config_passed": true,
+      "bad_config_json_error_passed": true,
+      "download_workbook_sheet_count": 6
+    },
+    "image_import_safety": {
+      "test_table_protection": true,
+      "force_production_table_required": true
+    }
   }
 }
