@@ -547,6 +547,31 @@ py main.py --ocr-json-file local\ocr_text_by_source.json
 
 外部 OCR 文本会进入 LLM v2 prompt，并在字段证据中标记 `source=external_ocr_text`。
 
+图片表格文章会先判断是否存在 HTML table。若没有 HTML table 但存在图片，处理顺序为：
+
+```text
+外部 OCR 文本（如果提供）
+→ vision LLM（如果配置且可用）
+→ PaddleOCR
+→ 规则抽取 + LLM v2 融合
+```
+
+`config/llm_config.yml` 支持可选 vision 配置，所有值都通过环境变量注入，不要把 API Key 写入文件：
+
+```yaml
+vision:
+  enabled: "${VISION_LLM_ENABLED}"
+  provider: "${VISION_LLM_PROVIDER}"
+  api_key: "${VISION_LLM_API_KEY}"
+  base_url: "${VISION_LLM_BASE_URL}"
+  model: "${VISION_LLM_MODEL}"
+  timeout_seconds: 120
+```
+
+vision 模型需支持 OpenAI-compatible `chat.completions` 的 `image_url` 或 base64 data URL 内容块，例如 GPT-4o、GPT-4.1、Qwen-VL 或其他兼容多模态模型。DeepSeek 文本模型、`deepseek-chat` 等文本模型只适合文本抽取，不等于图片识别模型；图片表格必须配置 vision 模型、PaddleOCR，或提供外部 OCR 文本。
+
+前端列表页提供“外部 OCR 文本”输入框。选择记录后粘贴图片表格 OCR 文本再生成 Excel，后端会通过 `/api/extract` 的 `external_ocr_text` 注入同一条抽取链路，结果页会显示“使用了外部 OCR 文本”。
+
 ### 大模型返回 JSON 解析失败怎么办？
 
 程序会自动去掉 ```json 代码块、截取第一个 JSON 数组或对象。如果仍失败，原始输出会保存到 `logs/failed_llm_outputs/`，该记录会生成一行兜底数据，基础字段仍会写入 Excel。

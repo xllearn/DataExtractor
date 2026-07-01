@@ -21,6 +21,7 @@ DEFAULTS: Dict[str, Any] = {
     "执行状态": "执行中",
     "是否需要手动修改执行状态(1是0否)": 0,
 }
+GENERIC_REGION_VALUES = {"国家", "全国", "中国"}
 
 ALIASES: Dict[str, List[str]] = {
     "报销比例": ["支付比例", "报付比例", "补偿比例", "赔付比例"],
@@ -116,6 +117,8 @@ def normalize_record_fields(row: Dict[str, Any], field_mapping: FieldMapping) ->
 def apply_direct_fields(row: Dict[str, Any], record: Dict[str, Any], field_mapping: FieldMapping) -> Dict[str, Any]:
     merged = dict(row or {})
     for header, value in (record.get("_direct_fields") or {}).items():
+        if header == "地区名称" and str(value).strip() in GENERIC_REGION_VALUES:
+            continue
         if header in field_mapping.headers and value not in (None, ""):
             merged[header] = value
     return normalize_record_fields(merged, field_mapping)

@@ -385,5 +385,72 @@
       ],
       "preexisting_untracked": "Q57D2088.tmp"
     }
+  },
+  "supplemental_image_table_2026_07_01": {
+    "overall_passed": true,
+    "p0_p1": "none",
+    "vision_config": {
+      "supported": true,
+      "env_driven": true,
+      "no_key_committed": true
+    },
+    "company_gateway": {
+      "base_url": "http://192.168.34.97",
+      "openai_models_endpoint": true,
+      "chat_completions_http_200": true,
+      "vision_message_format_http_200": true,
+      "vision_understanding_reliable": false
+    },
+    "issue_sample": {
+      "source_url": "https://mp.weixin.qq.com/s/7meXk1OSTtr9-GTFxFX4HQ",
+      "output": "outputs/real_db_20/image_table_external_20260701_1429/商业补充保险抽取结果_20260701_142756.xlsx",
+      "rows": 10,
+      "image_count": 2,
+      "external_ocr_used": true,
+      "vision_enabled": true,
+      "vision_triggered": false,
+      "ocr_triggered": false,
+      "field_evidence_external_ocr_text": true,
+      "region": "湖南省",
+      "person_type": "中国大陆籍人士",
+      "insurance_type": "普惠门诊保·如意版2025",
+      "disease_name_empty": true,
+      "age_range_in_person_type": false,
+      "online_drug_limit": "10000元",
+      "online_drug_ratio": "70%",
+      "accident_outpatient_limit": "100000元",
+      "accident_outpatient_deductible": "免赔额100元",
+      "accident_outpatient_ratio": "80%"
+    },
+    "commands": {
+      "focused_vision_image_table_ocr": {
+        "passed": true,
+        "tests": 17
+      },
+      "unittest": {
+        "passed": true,
+        "tests": 123
+      },
+      "pytest": {
+        "passed": true,
+        "tests": 123,
+        "subtests": 36,
+        "warnings": 1
+      },
+      "compileall_project": {
+        "passed": true
+      },
+      "ai_generated": {
+        "passed": true,
+        "tests": 1
+      },
+      "bare_python_commands": {
+        "passed": false,
+        "reason": "python command exited 1 with no output; py and .venv_ocr python were used"
+      },
+      "real_sample_external_ocr": {
+        "passed": true
+      }
+    }
   }
 }

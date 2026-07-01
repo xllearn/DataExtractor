@@ -1,13 +1,14 @@
 import importlib.util
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse
 
 import requests
 from PIL import Image
 
+from security_utils import mask_sensitive_text
 from utils import ensure_dir
 
 
@@ -22,6 +23,7 @@ class OcrSummary:
     text: str
     success_count: int
     failure_count: int
+    errors: List[Dict[str, Any]] = field(default_factory=list)
 
 
 def get_ocr_status() -> dict:
@@ -65,24 +67,45 @@ def process_image_ocr(
     texts: List[str] = []
     success_count = 0
     failure_count = 0
+    errors: List[Dict[str, Any]] = []
 
     for image_index, url in enumerate(image_urls, start=1):
         marker = f"【图片OCR-{image_index}】"
+        diagnostic: Dict[str, Any] = {
+            "source": "paddleocr",
+            "record_index": record_index,
+            "image_index": image_index,
+            "image_url": url,
+            "download_success": False,
+            "download_status": "",
+            "image_format": "",
+            "ocr_initialized": False,
+            "error": "",
+        }
         try:
             image_path = download_image(url, temp_dir, record_index, image_index)
+            diagnostic["download_success"] = True
+            diagnostic["download_status"] = "ok"
             prepared_path = prepare_image_for_ocr(image_path)
-            ocr_text = recognize_image(prepared_path)
+            diagnostic["image_format"] = detect_image_format(prepared_path)
+            engine = get_ocr_engine()
+            diagnostic["ocr_initialized"] = True
+            ocr_text = recognize_image(prepared_path, engine=engine)
             if not ocr_text.strip():
                 ocr_text = "--"
             texts.append(f"{marker}\n{ocr_text}")
             success_count += 1
         except Exception as exc:
             failure_count += 1
+            diagnostic["error"] = mask_sensitive_text(str(exc))
+            if not diagnostic["download_success"]:
+                diagnostic["download_status"] = diagnostic["error"] or "download_failed"
+            errors.append(diagnostic)
             texts.append(f"{marker}\n--")
             if logger:
                 logger.exception("图片 OCR 失败: record=%s image=%s url=%s error=%s", record_index, image_index, url, exc)
 
-    return OcrSummary(text="\n\n".join(texts), success_count=success_count, failure_count=failure_count)
+    return OcrSummary(text="\n\n".join(texts), success_count=success_count, failure_count=failure_count, errors=errors)
 
 
 def download_image(url: str, temp_dir: Path, record_index: int, image_index: int) -> Path:
@@ -108,8 +131,16 @@ def prepare_image_for_ocr(image_path: Path) -> Path:
     return output_path
 
 
-def recognize_image(image_path: Path) -> str:
-    engine = get_ocr_engine()
+def detect_image_format(image_path: Path) -> str:
+    try:
+        with Image.open(image_path) as image:
+            return str(image.format or image_path.suffix.lstrip(".") or "unknown")
+    except Exception as exc:
+        return f"unknown: {exc}"
+
+
+def recognize_image(image_path: Path, engine=None) -> str:
+    engine = engine or get_ocr_engine()
     result = engine.ocr(str(image_path), cls=True)
     lines: List[str] = []
     for page in result or []:

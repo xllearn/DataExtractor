@@ -446,3 +446,46 @@
 - `.venv_ocr/`、`logs/`、`outputs/`、真实数据库报告产物均不提交。
 - 8000 端口当前由新启动的 Python 3.11 API 服务占用，前端地址为 `http://127.0.0.1:8000/`。
 - 未跟踪的 `Q57D2088.tmp` 在本轮开始前已存在，仍未纳入提交。
+
+## 2026-07-01 续 12
+
+### 本轮目标
+
+修复 `普惠门诊保·如意版2025 保障详情` 这类关键保障责任表在图片中的文章只输出 1 行的问题；接入可选 vision 模型、增强 PaddleOCR 失败诊断、完善外部 OCR 文本 fallback，并使用真实数据库样本复测后推送。
+
+### 根因定位
+
+- 该样本没有 HTML table，保障责任表在图片中。
+- 旧流程先基于正文和文本 LLM 抽取，只有低置信度时才重跑 OCR；图片 OCR 全部失败时只保留首轮稀疏结果。
+- 外部 OCR 文本之前只作为普通正文进入规则/LLM，无法稳定拆成多条保障责任。
+
+### 已完成
+
+- 新增 `vision_client.py`、`vision_extractor.py`，支持 OpenAI-compatible vision `image_url`/base64 调用；配置通过 `VISION_LLM_*` 环境变量读取，不写死 key。
+- 新增 `ocr_table_parser.py` 和 `image_table_pipeline.py`，在“无 HTML 表 + 有图片”时前置图片表格识别；外部 OCR 文本优先，其次 vision，最后 PaddleOCR。
+- 外部 OCR 文本现在能直接解析“保障项目 / 累计保险金额 / 等待期、免赔额、给付比例”文本，拆成多行保障责任。
+- `image_ocr.py` 的 `OcrSummary` 增加逐图错误诊断：图片 URL、下载状态、图片格式、OCR 初始化状态和异常信息。
+- 采集日志新增 `vision_enabled`、`vision_triggered`、`vision_success_count`、`vision_failure_count`、`vision_model`、`vision_error`。
+- 多行图片表格场景下，正文规则只补公共字段，避免把某一行的 `免赔额0元` 错配到第一条保障责任。
+- 泛化地区直字段 `国家/全国/中国` 不再覆盖 OCR/正文中更具体的 `湖南省`。
+- 前端新增“外部 OCR 文本”输入框，并随 `/api/extract` 传入 `external_ocr_text`。
+- README 补充 DeepSeek 文本模型、vision 模型、PaddleOCR 和外部 OCR fallback 的区别与配置方式。
+
+### 已验证
+
+- 公司网关 `http://192.168.34.97/v1/models` 可访问，`elian-GLM5` 可通过 OpenAI-compatible `chat.completions` 调用；真实 key 只用于运行时环境变量，未写入仓库或日志。
+- vision 消息格式探测请求返回 HTTP 200，但当前 `elian-GLM5` 回复未体现可靠图像理解；本样本采用外部 OCR 文本作为最高优先级兜底。
+- 真实样本最终运行：`outputs/real_db_20/image_table_external_20260701_1429/商业补充保险抽取结果_20260701_142756.xlsx`。
+- 真实样本结果：输出 10 行；`地区名称=湖南省`，`人员类型=中国大陆籍人士`，`保险类型=普惠门诊保·如意版2025`；`病种名称` 为空；`6-65周岁` 写入备注；字段证据包含 `source=external_ocr_text`。
+- 关键责任：`意外门诊急诊费用补偿` 抽出 `补助限额=100000元`、`起付标准=免赔额100元`、`报销比例=80%`；`在线问诊药品费用医疗保险金` 抽出 `补助限额=10000元`、`报销比例=70%`。
+- 公司 LLM 接口调用成功但未返回严格 JSON，系统保留规则解析的 10 行结果，不再退化为 1 行。
+- 全量 `unittest`：`.venv_ocr\Scripts\python.exe -m unittest discover -s tests -v`，123 tests OK。
+- `pytest`：`py -m pytest -q`，123 passed，36 subtests passed，1 个 FastAPI/Starlette deprecation warning。
+- `compileall`：`py -m compileall -q -x "..." .`，通过，退出码 0。
+- AI 生成数据测试：`py -m unittest tests.test_ai_generated_cases -v`，1 test OK。
+- 裸 `python -m unittest ...` 和 `python -m pytest ...` 在当前环境直接退出 1 且无输出；本机可用解释器为 `py` 和 `.venv_ocr\Scripts\python.exe`。
+
+### 注意事项
+
+- 本轮不提交 `.env`、`logs/`、`outputs/`、真实数据库连接串、真实 API Key 或真实测试 Excel。
+- 未跟踪的 `Q57D2088.tmp` 在本轮开始前已存在，仍未纳入提交。

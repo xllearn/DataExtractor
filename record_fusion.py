@@ -18,6 +18,7 @@ from rule_extractor import is_valid_disease_name, normalize_disease_name
 
 SOURCE_PRIORITY = ["database_direct", "table", "text_rule", "llm"]
 DISEASE_FIELD = "病种名称"
+GENERIC_REGION_VALUES = {"国家", "全国", "中国"}
 
 
 def _meaningful(value: Any) -> bool:
@@ -49,6 +50,8 @@ def _base_records(table_records: List[Dict[str, Any]], text_rule_records: List[D
 def _direct_field_evidence(record: Dict[str, Any], field_mapping: FieldMapping) -> List[Dict[str, Any]]:
     evidence: List[Dict[str, Any]] = []
     for field, value in (record.get("_direct_fields") or {}).items():
+        if field == "地区名称" and str(value).strip() in GENERIC_REGION_VALUES:
+            continue
         if field in field_mapping.headers and _meaningful(value):
             evidence.append(
                 {
@@ -69,7 +72,7 @@ def _direct_row(record: Dict[str, Any], field_mapping: FieldMapping) -> Dict[str
     return {
         field: value
         for field, value in (record.get("_direct_fields") or {}).items()
-        if field in field_mapping.headers and _meaningful(value)
+        if field in field_mapping.headers and _meaningful(value) and not (field == "地区名称" and str(value).strip() in GENERIC_REGION_VALUES)
     }
 
 

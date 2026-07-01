@@ -3,7 +3,7 @@ from pathlib import Path
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-WEB_APP_VERSION = "20260701_job_fix"
+WEB_APP_VERSION = "20260701_image_table"
 
 
 class WebAppStaticTests(unittest.TestCase):
@@ -45,6 +45,8 @@ class WebAppStaticTests(unittest.TestCase):
         self.assertIn("prevPageBtn", index_source)
         self.assertIn("nextPageBtn", index_source)
         self.assertIn("clearSelectionBtn", index_source)
+        self.assertIn("externalOcrInput", index_source)
+        self.assertIn("external_ocr_text", app_source)
         self.assertIn("payload.result_page", app_source)
         self.assertNotIn("payload.result_page ||", app_source)
         self.assertNotIn("encodeURIComponent(payload.job_id)", app_source)

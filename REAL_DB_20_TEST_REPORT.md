@@ -462,3 +462,34 @@ py main.py --config logs/real_db_20/db_config.runtime.yml --field-config config/
 - 命令：`py scripts\run_real_db_20.py --result-dir reports\web_fix_persistent_job_20260701_133010`。
 - 运行结果：通过，`passed=True`。
 - 结论：本轮未发现阻断推送的 P0/P1；真实数据产物不纳入 Git。
+
+## 19. 2026-07-01 图片表格样本复测
+
+### 19.1 公司模型网关检查
+
+- 网关：`http://192.168.34.97`。
+- `/v1/models` 返回 OpenAI-compatible 模型列表，包含 `elian-GLM5`。
+- `elian-GLM5` 的 `chat.completions` 文本调用返回 HTTP 200；真实 API Key 仅以环境变量注入，未写入配置、日志或提交。
+- `image_url` 消息格式请求返回 HTTP 200，但模型回复未体现可靠图片理解，因此本样本最终以外部 OCR 文本作为最高优先级兜底。
+
+### 19.2 真实样本最终复测
+
+- 样本：`普惠门诊保·如意版2025 保障详情`，URL `https://mp.weixin.qq.com/s/7meXk1OSTtr9-GTFxFX4HQ`。
+- 命令：使用 `logs/real_db_20/db_config.runtime.yml`、公司 LLM 环境变量、`--ocr-text-file logs/real_db_20/image_table_external_20260701_1429/ocr_text.txt`、`--no-ocr`。
+- 输出：`outputs/real_db_20/image_table_external_20260701_1429/商业补充保险抽取结果_20260701_142756.xlsx`。
+- 结果：真实数据库读取 1 条，图片数 2，外部 OCR 文本进入首轮抽取，表格规则抽取 10 条，最终 `结果数据` 10 行。
+- 采集日志：`external_ocr_used=true`，`vision_enabled=true`，`vision_triggered=false`，`ocr_triggered=false`，`output_rows=10`。
+- 字段证据：包含 `source=external_ocr_text`。
+
+### 19.3 字段验收
+
+- `意外身故及伤残保险金`：`补助限额=200000元`。
+- `航空/火车/轮船意外身故及伤残保险金`：均为 `1000000元`。
+- `意外骨折和脱臼`：`30000元`。
+- `意外住院津贴保险金`：`18000元`。
+- `重疾住院津贴保险金`：`18000元`。
+- `在线问诊药品费用医疗保险金`：`补助限额=10000元`，`报销比例=70%`。
+- `猝死`：`200000元`。
+- `意外门诊急诊费用补偿`：`补助限额=100000元`，`起付标准=免赔额100元`，`报销比例=80%`。
+- 公共字段：`地区名称=湖南省`，`人员类型=中国大陆籍人士`，`保险类型=普惠门诊保·如意版2025`。
+- `6-65周岁` 留在备注中，未进入人员类型；免责条款疾病未进入 `病种名称`。

@@ -1,5 +1,5 @@
 const selectedIds = new Set();
-const WEB_APP_VERSION = "20260701_job_fix";
+const WEB_APP_VERSION = "20260701_image_table";
 
 const elements = {
   configStatus: document.querySelector("#configStatus"),
@@ -8,6 +8,7 @@ const elements = {
   searchBtn: document.querySelector("#searchBtn"),
   noOcrInput: document.querySelector("#noOcrInput"),
   noLlmInput: document.querySelector("#noLlmInput"),
+  externalOcrInput: document.querySelector("#externalOcrInput"),
   extractBtn: document.querySelector("#extractBtn"),
   selectionStatus: document.querySelector("#selectionStatus"),
   jobStatus: document.querySelector("#jobStatus"),
@@ -265,6 +266,7 @@ async function extractExcel() {
         mode: "merge",
         no_ocr: elements.noOcrInput.checked,
         no_llm: elements.noLlmInput.checked,
+        external_ocr_text: elements.externalOcrInput.value.trim(),
       }),
     });
     if (!payload.job_id || !String(payload.job_id).startsWith("job_")) {

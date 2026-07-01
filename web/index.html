@@ -24,6 +24,11 @@
         <button id="extractBtn" type="button">生成 Excel</button>
       </section>
 
+      <section class="advanced">
+        <label for="externalOcrInput">外部 OCR 文本</label>
+        <textarea id="externalOcrInput" rows="4" placeholder="粘贴图片表格 OCR 文本"></textarea>
+      </section>
+
       <section class="status">
         <span id="selectionStatus">已选择 0 条</span>
         <span id="jobStatus"></span>
@@ -60,6 +65,6 @@
         <tbody id="articleBody"></tbody>
       </table>
     </main>
-    <script src="/web/app.js?v=20260701_job_fix"></script>
+    <script src="/web/app.js?v=20260701_image_table"></script>
   </body>
 </html>

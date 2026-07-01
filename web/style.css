@@ -26,6 +26,12 @@ body {
   margin-bottom: 16px;
 }
 
+.advanced {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 16px;
+}
+
 .toolbar {
   justify-content: space-between;
 }
@@ -52,6 +58,16 @@ select {
   border: 1px solid #cbd2d9;
   border-radius: 6px;
   background: #fff;
+}
+
+textarea {
+  width: 100%;
+  min-height: 88px;
+  padding: 8px 10px;
+  resize: vertical;
+  border: 1px solid #cbd2d9;
+  border-radius: 6px;
+  font: inherit;
 }
 
 button,

@@ -3,3 +3,11 @@ api_key: "${LLM_API_KEY}"
 base_url: "${LLM_BASE_URL}"
 model: "${LLM_MODEL}"
 format: "v2"
+
+vision:
+  enabled: "${VISION_LLM_ENABLED}"
+  provider: "${VISION_LLM_PROVIDER}"
+  api_key: "${VISION_LLM_API_KEY}"
+  base_url: "${VISION_LLM_BASE_URL}"
+  model: "${VISION_LLM_MODEL}"
+  timeout_seconds: 120

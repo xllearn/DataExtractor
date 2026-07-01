@@ -191,3 +191,28 @@ Observed frontend state:
 - `/api/config/status`: `ocr_available=true`, `ocr_engine=paddleocr`.
 - Home page: `total=7584`, `第 1 / 380 页`, JS `/web/app.js?v=20260701_job_fix`.
 - Result page: success, preview headers=26, preview rows=1, downloadable 6-sheet workbook.
+
+## 2026-07-01 Supplemental Image Table Acceptance
+
+- Overall status: passed.
+- P0/P1: none found.
+- Added optional OpenAI-compatible vision extraction path and environment-driven `VISION_LLM_*` config.
+- External OCR text now has highest priority for image-table articles and can deterministically split the sample into 10 benefit rows.
+- PaddleOCR failures now preserve per-image diagnostics for URL, download status, image format, OCR init state and exception message.
+- Frontend list page can send pasted external OCR text through `/api/extract`.
+
+| Check | Result |
+| --- | --- |
+| focused vision/image table/OCR fallback regression | passed, 17 tests |
+| `.venv_ocr\Scripts\python.exe -m unittest discover -s tests -v` | passed, 123 tests |
+| `py -m pytest -q` | passed, 123 tests, 36 subtests, 1 warning |
+| compileall and AI generated data | passed |
+| real sample with company LLM env and external OCR text | passed, 10 rows |
+| field evidence source | contains `external_ocr_text` |
+
+Final real sample output:
+
+- Workbook: `outputs/real_db_20/image_table_external_20260701_1429/商业补充保险抽取结果_20260701_142756.xlsx`.
+- Collection log: `image_count=2`, `external_ocr_used=true`, `vision_enabled=true`, `vision_triggered=false`, `ocr_triggered=false`, `output_rows=10`.
+- Key rows: `意外门诊急诊费用补偿` has `100000元`, `免赔额100元`, `80%`; `在线问诊药品费用医疗保险金` has `10000元`, `70%`.
+- Public fields: `湖南省`, `中国大陆籍人士`, `普惠门诊保·如意版2025`; disease name remains empty and age range stays in notes.

@@ -100,7 +100,8 @@ class OcrStatusAndImageRiskTests(unittest.TestCase):
                 ocr_status={"available": False, "reason": "OCR依赖不可用", "engine": "none"},
             )
 
-        self.assertEqual(rows[0]["报销比例"], "免赔额100元，给付比例80%")
+        self.assertEqual(rows[0]["报销比例"], "80%")
+        self.assertEqual(rows[0]["起付标准"], "免赔额100元")
         self.assertIn("6-65周岁", rows[0]["备注"])
         self.assertIn("意外门诊急诊费用补偿", client.prompt)
         self.assertTrue(any(item.get("source") == "external_ocr_text" for item in metadata["field_evidence"]))

@@ -29,7 +29,7 @@ from utils import ensure_dir
 
 MAX_SELECTED = 50
 JOB_ID_RE = re.compile(r"^job_[A-Za-z0-9_-]+$")
-WEB_APP_VERSION = "20260701_job_fix"
+WEB_APP_VERSION = "20260701_image_table"
 LOGGER = logging.getLogger(__name__)
 
 

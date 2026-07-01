@@ -146,18 +146,16 @@ class RetryFlowTests(unittest.TestCase):
             )
 
             self.assertEqual(len(ocr_calls), 1)
-            self.assertEqual(len(fake_llm.prompts), 2)
-            self.assertNotIn("图片OCR-1", fake_llm.prompts[0])
-            self.assertIn("图片OCR-1", fake_llm.prompts[1])
+            self.assertEqual(len(fake_llm.prompts), 1)
+            self.assertIn("图片OCR-1", fake_llm.prompts[0])
             self.assertEqual(rows[0]["报销比例"], "80%")
             self.assertEqual(list(rows[0].keys()), EXCEL_HEADERS)
 
             eval_path = Path(tmp) / "extract_eval.jsonl"
             payloads = [json.loads(line) for line in eval_path.read_text(encoding="utf-8").splitlines()]
-            self.assertGreaterEqual(len(payloads), 2)
+            self.assertGreaterEqual(len(payloads), 1)
             self.assertIn("confidence_score", payloads[0])
-            self.assertTrue(payloads[0]["should_retry_with_ocr"])
-            self.assertIn("ocr_retry", {payload["attempt"] for payload in payloads})
+            self.assertIn("initial", {payload["attempt"] for payload in payloads})
 
     def test_ocr_failure_path_still_saves_intermediate_payload(self):
         from image_ocr import OcrSummary

@@ -345,3 +345,32 @@ Frontend verification details:
 - Result URL: `/web/result.html?job_id=job_20260701_132800_b4b70145`.
 - Result page: success, preview headers=26, preview rows=1, download visible.
 - Reload after API restart: same result page still success.
+
+## 2026-07-01 Supplemental Image Table Extraction Verification
+
+- Overall status: passed.
+- P0/P1: none found.
+- Added vision model configuration and client modules; values are environment-driven and no API key is committed.
+- Added deterministic image-table OCR text parsing so external OCR text can produce multiple benefit rows before LLM fusion.
+- Added PaddleOCR per-image failure diagnostics in logs and collection sheet fields for vision status.
+- Frontend now accepts pasted external OCR text and sends it as `external_ocr_text`.
+
+| Check | Result |
+| --- | --- |
+| focused vision/image-table/OCR fallback regression | passed, 17 tests |
+| focused API/static/regression suite | passed, 36 tests |
+| `.venv_ocr\Scripts\python.exe -m unittest discover -s tests -v` | passed, 123 tests |
+| `py -m pytest -q` | passed, 123 tests, 36 subtests, 1 deprecation warning |
+| `py -m compileall -q -x "..." .` | passed |
+| `py -m unittest tests.test_ai_generated_cases -v` | passed, 1 test |
+| real sample with company LLM env + external OCR text | passed, 10 rows |
+
+Note: bare `python -m unittest ...` and `python -m pytest ...` returned exit code 1 with no output in this environment; validation used `py` and `.venv_ocr\Scripts\python.exe`.
+
+Real sample final output:
+
+- URL: `https://mp.weixin.qq.com/s/7meXk1OSTtr9-GTFxFX4HQ`.
+- Output: `outputs/real_db_20/image_table_external_20260701_1429/商业补充保险抽取结果_20260701_142756.xlsx`.
+- Collection log: `image_count=2`, `external_ocr_used=true`, `vision_enabled=true`, `vision_triggered=false`, `ocr_triggered=false`, `output_rows=10`.
+- Key rows: `意外门诊急诊费用补偿` => `补助限额=100000元`, `起付标准=免赔额100元`, `报销比例=80%`; `在线问诊药品费用医疗保险金` => `补助限额=10000元`, `报销比例=70%`.
+- Public fields: `地区名称=湖南省`, `人员类型=中国大陆籍人士`, `保险类型=普惠门诊保·如意版2025`; `病种名称` empty; `6-65周岁` stayed in notes, not person type.
