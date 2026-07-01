@@ -374,3 +374,40 @@ Real sample final output:
 - Collection log: `image_count=2`, `external_ocr_used=true`, `vision_enabled=true`, `vision_triggered=false`, `ocr_triggered=false`, `output_rows=10`.
 - Key rows: `意外门诊急诊费用补偿` => `补助限额=100000元`, `起付标准=免赔额100元`, `报销比例=80%`; `在线问诊药品费用医疗保险金` => `补助限额=10000元`, `报销比例=70%`.
 - Public fields: `地区名称=湖南省`, `人员类型=中国大陆籍人士`, `保险类型=普惠门诊保·如意版2025`; `病种名称` empty; `6-65周岁` stayed in notes, not person type.
+
+## 2026-07-01 Automatic Image OCR Regression Verification
+
+- Overall status: passed.
+- P0/P1: none found.
+- Scope: DB article image-table extraction, PaddleOCR compatibility, fragmented OCR table parsing, target real sample, and random 5 real DB sample comparison.
+
+| Check | Result |
+| --- | --- |
+| `.venv_ocr\Scripts\python.exe -m unittest tests.test_image_ocr_compat` | passed, 3 tests |
+| `.venv_ocr\Scripts\python.exe -m unittest tests.test_ocr_table_parser_fragmented` | passed, 2 tests |
+| target real DB sample with automatic local OCR | passed, OCR 2/2, output 6 rows |
+| random 5 real DB records | passed, 5 records, 0 record-level failures |
+| `.venv_ocr\Scripts\python.exe -m unittest discover -s tests` | passed, 128 tests |
+
+Target real sample:
+
+- URL: `https://mp.weixin.qq.com/s/7meXk1OSTtr9-GTFxFX4HQ`.
+- Output: `outputs/real_db_20/auto_ocr_20260701_152155/商业补充保险抽取结果_20260701_152257.xlsx`.
+- OCR: `ocr_triggered=true`, `ocr_success_count=2`, `ocr_failure_count=0`.
+- Key extracted rows: `意外身故及伤残保险金=200000元`, `航空意外身故及伤残保险金=1000000元`, `意外骨折和脱臼=30000元`, `在线问诊药品费用医疗保险金=10000元/免赔额0元/70%`, `意外门诊急诊费用补偿=100000元/免赔额100元/80%`.
+- Regression target met: the DB article no longer collapses to one row when the benefit table is in images.
+
+Random 5 real DB comparison:
+
+- Artifact root: `C:\Users\admin\Desktop\DataExtractor_random5_test_20260701_152440`.
+- Excel: `C:\Users\admin\Desktop\DataExtractor_random5_test_20260701_152440\outputs\商业补充保险抽取结果_20260701_152922.xlsx`.
+- Comparison report: `C:\Users\admin\Desktop\DataExtractor_random5_test_20260701_152440\RANDOM5_COMPARISON_REPORT.md`.
+- Source image contact sheets: `C:\Users\admin\Desktop\DataExtractor_random5_test_20260701_152440\source_image_sheets`.
+- Original `mp.weixin.qq.com` browser/requests access timed out, and local `file://` browser snapshots were blocked by browser policy. Comparison therefore used DB-saved HTML plus downloaded source images from the extraction run.
+- Result: close enough for push. One article with a real benefit responsibility table produced 7 detail rows; the other four articles were marketing/news/service content without stable detailed responsibility tables and produced reviewed summary rows.
+
+Notes:
+
+- Warnings from Paddle/FastAPI were non-fatal.
+- One random-5 image URL returned HTTP 502; that record still completed with a fallback/review row.
+- Generated artifacts remain local and are not committed.

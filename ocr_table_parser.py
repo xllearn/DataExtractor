@@ -19,13 +19,26 @@ BENEFIT_NAMES = [
     "意外门诊急诊费用补偿",
 ]
 
+BENEFIT_FRAGMENT_RULES = [
+    ("航空意外身故及伤残保险金", ("航空意外身故", "及伤残保险金")),
+    ("火车意外身故及伤残保险金", ("火车意外身故", "及伤残保险金")),
+    ("轮船意外身故及伤残保险金", ("轮船意外身故", "及伤残保险金")),
+    ("意外身故及伤残保险金", ("意外身故及", "伤残保险金")),
+    ("在线问诊药品费用医疗保险金", ("在线问诊药品", "费用医疗保险金")),
+    ("意外门诊急诊费用补偿", ("意外门诊", "急诊费用补偿")),
+    ("意外骨折和脱臼", ("意外骨折和脱臼",)),
+    ("意外住院津贴保险金", ("意外住院津贴保险金",)),
+    ("重疾住院津贴保险金", ("重疾住院津贴保险金",)),
+    ("猝死", ("猝死",)),
+]
+
 AMOUNT_RE = re.compile(r"(\d+(?:\.\d+)?\s*(?:元|万元|万|亿元)?)")
-RATIO_RE = re.compile(r"(?:给付比例|报销比例|赔付比例)\s*([0-9]+(?:\.[0-9]+)?\s*[%％])")
+RATIO_RE = re.compile(r"(?:给[\s，,、]*付比例|报销比例|赔付比例|付比例)\s*([0-9]+(?:\.[0-9]+)?\s*[%％])")
 DEDUCTIBLE_RE = re.compile(r"((?:每次事故)?免赔额\s*\d+(?:\.\d+)?\s*元)")
 WAITING_RE = re.compile(r"(等待期\s*\d+\s*天)")
-PERIOD_RE = re.compile(r"保障期间\s*[:：]?\s*([^\n，,；;]+)")
-AGE_RE = re.compile(r"投保年龄\s*[:：]?\s*([^\n，,；;]+)")
-PREMIUM_RE = re.compile(r"保费\s*[:：]?\s*([0-9]+(?:\.\d+)?\s*元/年/人)")
+PERIOD_RE = re.compile(r"保障期间[ \t\u3000]*[:：]?[ \t\u3000]*([^\n，,；;]+)")
+AGE_RE = re.compile(r"投保年龄[ \t\u3000]*[:：]?[ \t\u3000]*([^\n，,；;]+)")
+PREMIUM_RE = re.compile(r"保费[ \t\u3000]*[:：]?[ \t\u3000]*([0-9]+(?:\.\d+)?\s*元/年/人)")
 INSURANCE_RE = re.compile(r"(普惠门诊保\s*[·・]?\s*如意版\s*[（(]?\s*2025\s*[）)]?)")
 PERSON_RE = re.compile(r"(中国大陆籍人士|中国大陆居民|中国大陆公民|被保险人|投保人)")
 PROVINCE_RE = re.compile(
@@ -100,6 +113,100 @@ def _match_benefit_line(line: str) -> tuple[str, str, str] | None:
     return None
 
 
+def _amount_only(line: str) -> str:
+    clean_line = re.sub(r"\s+", "", line or "")
+    match = AMOUNT_RE.fullmatch(clean_line)
+    if not match:
+        return ""
+    if re.fullmatch(r"(?:19|20)\d{2}", clean_line):
+        return ""
+    return _normalize_amount(match.group(1))
+
+
+def _find_fragment_positions(lines: List[str], start: int, end: int, fragments: tuple[str, ...]) -> List[int]:
+    positions: List[int] = []
+    cursor = start
+    for fragment in fragments:
+        found = -1
+        for index in range(cursor, end):
+            if fragment in lines[index]:
+                found = index
+                break
+        if found < 0:
+            return []
+        positions.append(found)
+        cursor = found + 1
+    return positions
+
+
+def _line_starts_other_benefit(line: str, current_name: str) -> bool:
+    for name, fragments in BENEFIT_FRAGMENT_RULES:
+        if name == current_name:
+            continue
+        if fragments and fragments[0] in line:
+            return True
+    return False
+
+
+def _next_benefit_start(lines: List[str], start: int, end: int, current_name: str, fragment_positions: set[int]) -> int:
+    for index in range(start, end):
+        if index in fragment_positions:
+            continue
+        if _line_starts_other_benefit(lines[index], current_name):
+            return index
+    return end
+
+
+def _reconstruct_fragmented_benefit_lines(source_text: str) -> List[str]:
+    lines = [_clean_text(line) for line in source_text.splitlines()]
+    lines = [line for line in lines if line]
+    reconstructed: List[str] = []
+    seen = set()
+    max_window = 12
+
+    for start, line in enumerate(lines):
+        if _match_benefit_line(line):
+            continue
+        for benefit_name, fragments in BENEFIT_FRAGMENT_RULES:
+            if not fragments or fragments[0] not in line:
+                continue
+            window_end = min(len(lines), start + max_window)
+            positions = _find_fragment_positions(lines, start, window_end, fragments)
+            if not positions:
+                continue
+            position_set = set(positions)
+            record_end = _next_benefit_start(lines, start + 1, window_end, benefit_name, position_set)
+
+            amount = ""
+            amount_index = -1
+            for index in range(start, record_end):
+                amount = _amount_only(lines[index])
+                if amount:
+                    amount_index = index
+                    break
+            if not amount:
+                continue
+
+            detail_parts: List[str] = []
+            for index in range(start, record_end):
+                if index == amount_index or index in position_set:
+                    continue
+                value = lines[index]
+                if _amount_only(value):
+                    continue
+                detail_parts.append(value)
+
+            key = (benefit_name, amount)
+            if key in seen:
+                continue
+            seen.add(key)
+            detail = "，".join(detail_parts)
+            reconstructed.append(_clean_text(f"{benefit_name} {amount} {detail}"))
+            break
+
+    return reconstructed
+
+
 def _evidence(
     source_id: str,
     info_id: str,
@@ -136,11 +243,17 @@ def extract_benefit_table_records_from_ocr_text(
 
     field_mapping = field_mapping or load_field_mapping(None)
     common = _find_common_context(source_text)
-    for raw_line in source_text.splitlines():
+    candidate_lines = list(source_text.splitlines()) + _reconstruct_fragmented_benefit_lines(source_text)
+    seen_records = set()
+    for raw_line in candidate_lines:
         matched = _match_benefit_line(raw_line)
         if not matched:
             continue
         benefit_name, amount, detail = matched
+        record_key = (benefit_name, amount)
+        if record_key in seen_records:
+            continue
+        seen_records.add(record_key)
         record: Dict[str, Any] = {
             "类型": benefit_name,
             "补助限额": amount,

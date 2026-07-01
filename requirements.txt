@@ -11,5 +11,5 @@ SQLAlchemy
 fastapi
 uvicorn
 httpx
-paddleocr
-paddlepaddle
+paddleocr==2.10.0
+paddlepaddle==2.6.2

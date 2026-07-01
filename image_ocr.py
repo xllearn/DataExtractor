@@ -1,8 +1,9 @@
 import importlib.util
+import inspect
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterable, List, Optional
 from urllib.parse import urlparse
 
 import requests
@@ -141,13 +142,68 @@ def detect_image_format(image_path: Path) -> str:
 
 def recognize_image(image_path: Path, engine=None) -> str:
     engine = engine or get_ocr_engine()
-    result = engine.ocr(str(image_path), cls=True)
+    result = _run_ocr(engine, str(image_path))
+    return "\n".join(_extract_text_lines(result))
+
+
+def _run_ocr(engine, image: str):
+    if hasattr(engine, "ocr"):
+        try:
+            return engine.ocr(image, cls=True)
+        except TypeError as exc:
+            message = str(exc)
+            if "cls" not in message or "unexpected keyword argument" not in message:
+                raise
+            return engine.ocr(image)
+
+    if hasattr(engine, "predict"):
+        return engine.predict(image)
+
+    raise TypeError("OCR engine does not provide ocr() or predict()")
+
+
+def _extract_text_lines(result: Any) -> List[str]:
     lines: List[str] = []
-    for page in result or []:
-        for item in page or []:
-            if len(item) >= 2 and isinstance(item[1], (list, tuple)) and item[1]:
-                lines.append(str(item[1][0]))
-    return "\n".join(lines)
+    seen = set()
+
+    def add_text(value: Any) -> None:
+        text = str(value or "").strip()
+        if text and text not in seen:
+            seen.add(text)
+            lines.append(text)
+
+    def walk(value: Any) -> None:
+        if value is None:
+            return
+
+        if isinstance(value, dict):
+            for key in ("rec_texts", "texts"):
+                texts = value.get(key)
+                if isinstance(texts, Iterable) and not isinstance(texts, (str, bytes)):
+                    for text in texts:
+                        add_text(text)
+                    return
+            if isinstance(value.get("text"), str):
+                add_text(value.get("text"))
+                return
+            for key in ("res", "result", "ocr_result", "pages"):
+                if key in value:
+                    walk(value.get(key))
+            return
+
+        if isinstance(value, (list, tuple)):
+            if len(value) >= 2 and isinstance(value[1], (list, tuple)) and value[1] and isinstance(value[1][0], str):
+                add_text(value[1][0])
+                return
+            if len(value) >= 2 and isinstance(value[0], str) and isinstance(value[1], (int, float)):
+                add_text(value[0])
+                return
+            for item in value:
+                walk(item)
+            return
+
+    walk(result)
+    return lines
 
 
 def get_ocr_engine():
@@ -155,5 +211,20 @@ def get_ocr_engine():
     if _OCR_ENGINE is None:
         from paddleocr import PaddleOCR
 
-        _OCR_ENGINE = PaddleOCR(use_angle_cls=True, lang="ch")
+        _OCR_ENGINE = _create_paddle_ocr_engine(PaddleOCR)
     return _OCR_ENGINE
+
+
+def _create_paddle_ocr_engine(paddle_ocr_cls):
+    try:
+        signature = inspect.signature(paddle_ocr_cls.__init__)
+        if "use_textline_orientation" in signature.parameters:
+            return paddle_ocr_cls(
+                lang="ch",
+                use_doc_orientation_classify=False,
+                use_doc_unwarping=False,
+                use_textline_orientation=True,
+            )
+    except (TypeError, ValueError):
+        pass
+    return paddle_ocr_cls(use_angle_cls=True, lang="ch")

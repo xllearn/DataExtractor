@@ -489,3 +489,44 @@
 
 - 本轮不提交 `.env`、`logs/`、`outputs/`、真实数据库连接串、真实 API Key 或真实测试 Excel。
 - 未跟踪的 `Q57D2088.tmp` 在本轮开始前已存在，仍未纳入提交。
+
+## 2026-07-01 Round 13
+
+### Goal
+
+Fix DB articles whose benefit tables are stored in images so they no longer collapse to a single row. Re-test the target real DB sample, then randomly test 5 more DB records and compare the generated Excel against the original article/image evidence before pushing.
+
+### Root Cause
+
+- The target article has no HTML table; the benefit table is embedded in article images.
+- The local OCR path was triggered, but PaddleOCR 3.7.0 failed with `PaddleOCR.predict() got an unexpected keyword argument 'cls'`.
+- Retrying without `cls` exposed a Paddle/PIR oneDNN runtime failure on the real image.
+- The configured company OpenAI-compatible endpoint accepted requests, but its image understanding was not reliable enough for this specific table, so deterministic OCR remained necessary.
+
+### Completed
+
+- Pinned the local OCR runtime to `paddleocr==2.10.0` and `paddlepaddle==2.6.2`, which successfully reads the real target images.
+- Made `image_ocr.py` compatible with both PaddleOCR 2.x legacy tuple/list results and PaddleOCR 3.x dict/predict-style results.
+- Added automatic retry when an OCR engine rejects the `cls` argument.
+- Added fragmented OCR table reconstruction in `ocr_table_parser.py` for rows split across multiple OCR text lines.
+- Prevented standalone years such as `2025` from being treated as insurance amounts.
+- Added focused regression tests for OCR compatibility and fragmented image-table parsing.
+- Created random-5 real DB validation artifacts under `C:\Users\admin\Desktop\DataExtractor_random5_test_20260701_152440`.
+
+### Verification
+
+- Focused OCR compatibility tests: `.venv_ocr\Scripts\python.exe -m unittest tests.test_image_ocr_compat` passed, 3 tests.
+- Focused fragmented parser tests: `.venv_ocr\Scripts\python.exe -m unittest tests.test_ocr_table_parser_fragmented` passed, 2 tests.
+- Target real sample `https://mp.weixin.qq.com/s/7meXk1OSTtr9-GTFxFX4HQ` processed with automatic image OCR: 2 images succeeded, 0 failed, and generated 6 benefit rows instead of 1.
+- Target real sample Excel: `outputs/real_db_20/auto_ocr_20260701_152155/商业补充保险抽取结果_20260701_152257.xlsx`.
+- Random 5 DB validation generated Excel and comparison report in `C:\Users\admin\Desktop\DataExtractor_random5_test_20260701_152440`.
+- Random 5 run processed 5 records with 0 record-level failures. One image in one record returned HTTP 502, while the record still completed with a fallback row.
+- Original `mp.weixin.qq.com` URLs timed out during browser/requests screenshot attempts, so comparison used the DB-saved HTML plus downloaded source images/contact sheets from the OCR run.
+- Random-5 comparison result: close enough for push. Record 1 split a real benefit table into 7 rows; records 2-5 were marketing/news/service articles without stable detailed benefit tables and were correctly marked/reviewed as summary rows.
+- Full suite: `.venv_ocr\Scripts\python.exe -m unittest discover -s tests` passed, 128 tests.
+
+### Notes
+
+- No API keys, `.env`, generated Excel files, downloaded article images, desktop reports, `logs/`, or `outputs/` are committed.
+- The pre-existing untracked `Q57D2088.tmp` remains untracked and is not part of this task.
+- Known limitation: PaddleOCR may still miss repeated amounts in merged image-table cells, but the target DB sample no longer collapses to one row and extracted key benefit amounts/deductibles/ratios match the source image evidence.
