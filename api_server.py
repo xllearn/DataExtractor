@@ -32,6 +32,7 @@ from services.extraction_service import ExtractionCancelled
 from services.extraction_service import ExtractionRequest as ServiceExtractionRequest
 from services.extraction_service import ExtractionService
 from services.job_store import JobStore, JobStoreError
+from services.quality_service import QualityService, QualityServiceError
 from services.review_service import ReviewService, ReviewServiceError
 from utils import ensure_dir
 
@@ -684,6 +685,7 @@ def create_app(
         )
     job_store = JobStore(output_root)
     review_service = ReviewService(output_root)
+    quality_service = QualityService(output_root)
     executor = ThreadPoolExecutor(max_workers=2)
     jobs: dict[str, dict] = {}
     cancelled_jobs: set[str] = set()
@@ -1174,6 +1176,46 @@ def create_app(
 
     def raise_review_error(exc: ReviewServiceError) -> None:
         raise ApiError(exc.status_code, exc.detail, exc.error_type)
+
+    def raise_quality_error(exc: QualityServiceError) -> None:
+        raise ApiError(exc.status_code, exc.detail, exc.error_type)
+
+    @app.post("/api/quality/evaluate")
+    async def quality_evaluate(request: Request):
+        fields, filename, file_bytes = await parse_upload_request(request)
+        try:
+            quality_service.validate_manual_upload(filename, file_bytes, MAX_UPLOAD_BYTES)
+        except QualityServiceError as exc:
+            raise_quality_error(exc)
+
+        job_id = str(fields.get("job_id") or "").strip()
+        if not job_id:
+            raise ApiError(400, "job_id is required", "ValidationError")
+        job = read_job_or_404(job_id)
+        generated_workbook = job_output_workbook_path(job)
+        try:
+            return quality_service.evaluate(job_id, generated_workbook, filename, file_bytes, MAX_UPLOAD_BYTES)
+        except QualityServiceError as exc:
+            raise_quality_error(exc)
+
+    @app.get("/api/quality/reports/{report_id}")
+    def quality_report(report_id: str):
+        try:
+            return quality_service.report(report_id)
+        except QualityServiceError as exc:
+            raise_quality_error(exc)
+
+    @app.get("/api/quality/reports/{report_id}/download")
+    def quality_report_download(report_id: str):
+        try:
+            path = quality_service.report_workbook_path(report_id)
+        except QualityServiceError as exc:
+            raise_quality_error(exc)
+        return FileResponse(
+            path,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            filename=path.name,
+        )
 
     @app.get("/api/jobs/{job_id}")
     def job_status(job_id: str):

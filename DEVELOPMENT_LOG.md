@@ -715,3 +715,13 @@ Continue optimization on `codex/db-to-excel-extractor`: start the project first,
 - Added API regression tests for stable item IDs, accepted/edited/ignored states, reviewed workbook download, no-path/no-secret responses, JSON errors, and job-not-ready handling.
 - Red TDD check: `py -m pytest tests/test_api_review.py -q` failed as expected with 2 failures because `/api/jobs/{job_id}/review-items` was not implemented.
 - Verification: `py -m pytest tests/test_api_server.py tests/test_extraction_service.py tests/test_web_app_static.py tests/test_core.py tests/test_api_review.py -q` passed, output `.............................................. [100%]` with the existing FastAPI/Starlette deprecation warning.
+
+## 2026-07-02 Phase 3 Task 6
+
+- Added quality evaluation APIs: `POST /api/quality/evaluate`, `GET /api/quality/reports/{report_id}`, and `GET /api/quality/reports/{report_id}/download`.
+- Added `services/quality_service.py` to validate manual `.xlsx` uploads, store them as controlled `manual.xlsx` files under `output_root/quality/<report_id>/`, run `quality_eval.run_quality_eval`, persist a public summary, and serve the generated xlsx report.
+- Quality summaries include report id, similarity metrics, pass/fail, worst fields, worst rows, missing core fields, low-confidence count, conflict count, and a report download URL without exposing absolute paths or secret-bearing values.
+- Download and report lookup are constrained to the report directory; unknown or invalid reports return JSON `QualityReportNotFound`.
+- Red TDD check: `py -m pytest tests/test_api_quality.py -q` failed as expected with missing quality API routes and non-unified 404 payloads.
+- Verification: `py -m pytest tests/test_api_quality.py -q` passed, output `... [100%]` with the existing FastAPI/Starlette deprecation warning.
+- Regression verification: `py -m pytest tests/test_api_quality.py tests/test_api_server.py tests/test_api_review.py tests/test_web_app_static.py tests/test_core.py -q` passed, output `............................................ [100%]` with the existing FastAPI/Starlette deprecation warning.
