@@ -1,0 +1,13 @@
+pymysql
+python-dotenv
+beautifulsoup4
+lxml
+requests
+openpyxl
+pillow
+openai
+PyYAML
+SQLAlchemy
+fastapi
+uvicorn
+httpx

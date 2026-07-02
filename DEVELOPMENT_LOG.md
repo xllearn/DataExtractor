@@ -748,3 +748,16 @@ Continue optimization on `codex/db-to-excel-extractor`: start the project first,
 - Review hardening fixed two regressions: upload extension validation cannot be relaxed by config and direct `api_server.py --app-config` startup is no longer blocked by import-time loading of a bad default app config. The red check failed as expected before the fixes.
 - Verification: `py -m pytest tests/test_api_auth.py tests/test_app_config_loader.py -q` passed, output `........ [100%]` with the existing FastAPI/Starlette deprecation warning.
 - Regression verification: `py -m pytest tests/test_api_server.py tests/test_api_auth.py tests/test_app_config_loader.py -q` passed, output `............................ [100%]` with the existing FastAPI/Starlette deprecation warning.
+
+## 2026-07-02 Phase 3 Task 9
+
+- Added Docker deployment files: default `runtime` Docker stage using `requirements-runtime.txt` without OCR-heavy dependencies, optional `ocr` stage, and compose services for the default API plus an `ocr` profile service.
+- Added `requirements-runtime.txt` so the default Docker image installs a fixed lightweight dependency set instead of filtering OCR packages at build time.
+- Compose mounts `outputs/`, `logs/`, `uploads/`, and `config/`, exposes the default API on port `8000`, binds container startup to `0.0.0.0`, and keeps `config/app_config.yml` unchanged at local `127.0.0.1`.
+- `.dockerignore` excludes `.env`, env variants, caches, virtualenvs, runtime/generated directories, sample binary artifacts, and temporary files so secrets and generated outputs are not copied into the image.
+- Health checks in Dockerfile and compose call `/api/health`, and the text/YAML tests inspect Docker configuration without requiring a Docker daemon.
+- Red TDD check: `py -m pytest tests/test_docker_config.py -q` failed as expected with 7 failures because `Dockerfile`, `docker-compose.yml`, and `.dockerignore` did not exist yet.
+- Review hardening red check: `py -m pytest tests/test_docker_config.py -q` failed with 2 failures until the runtime image installed from `requirements-runtime.txt` instead of filtering `requirements.txt` in the Dockerfile.
+- Green verification: `py -m pytest tests/test_docker_config.py -q` passed, output `........ [100%]`.
+- Regression verification: `py -m pytest tests/test_docker_config.py tests/test_app_config_loader.py tests/test_api_auth.py -q` passed, output `.................. [100%]` with the existing FastAPI/Starlette deprecation warning.
+- Diff verification command: `git diff --check`.
