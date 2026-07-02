@@ -140,6 +140,7 @@ class ApiServerTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         payload = response.json()
         self.assertEqual(payload["web_app_version"], WEB_APP_VERSION)
+        self.assertEqual(payload["web_app_version"], "0.3.0-productized")
         self.assertRegex(payload["git_commit"], r"^[0-9a-f]{7,40}$|^unknown$")
         self.assertTrue(payload["project_root"])
         self.assertTrue(payload["cwd"])

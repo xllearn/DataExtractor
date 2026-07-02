@@ -3,7 +3,7 @@ from pathlib import Path
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-WEB_APP_VERSION = "20260702_workbench"
+WEB_APP_VERSION = "0.3.0-productized"
 
 
 def read_web_file(name: str) -> str:

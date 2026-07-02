@@ -11,14 +11,12 @@ import inspect
 import shutil
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
-from email import policy
-from email.parser import BytesParser
 from pathlib import Path
 from threading import Lock
 from typing import Any, Callable, List, Optional
 from urllib.parse import quote
 
-from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -44,7 +42,7 @@ from utils import ensure_dir
 
 MAX_SELECTED = 50
 MAX_UPLOAD_BYTES = 20 * 1024 * 1024
-WEB_APP_VERSION = "20260701_image_table"
+WEB_APP_VERSION = "0.3.0-productized"
 LOGGER = logging.getLogger(__name__)
 SENSITIVE_NAME_RE = re.compile(r"\b(DATABASE_URL|DB_PASSWORD|LLM_API_KEY|Authorization|api_key|password|token|secret)\b", re.IGNORECASE)
 SENSITIVE_QUERY_RE = re.compile(
@@ -326,38 +324,64 @@ def _parse_bool_form(value: object, default: bool = False) -> bool:
     return normalized in {"1", "true", "yes", "on"}
 
 
-def _parse_multipart_upload(content_type: str, body: bytes) -> tuple[dict[str, str], str, bytes]:
-    if "multipart/form-data" not in content_type.lower():
-        raise ApiError(400, "上传请求必须使用 multipart/form-data", "ValidationError")
-    message = BytesParser(policy=policy.default).parsebytes(
-        f"Content-Type: {content_type}\r\nMIME-Version: 1.0\r\n\r\n".encode("utf-8") + body
-    )
-    if not message.is_multipart():
-        raise ApiError(400, "上传表单格式不正确", "ValidationError")
+def _upload_suffix(filename: str) -> str:
+    return Path(str(filename or "").replace("\\", "/")).suffix.lower()
 
-    fields: dict[str, str] = {}
-    filename = ""
-    file_bytes = b""
-    for part in message.iter_parts():
-        disposition = str(part.get("content-disposition") or "")
-        if "form-data" not in disposition:
-            continue
-        name = str(part.get_param("name", header="content-disposition") or "")
-        payload = part.get_payload(decode=True) or b""
-        part_filename = str(part.get_filename() or "")
-        if name == "file" and part_filename:
-            filename = part_filename
-            file_bytes = payload
-            continue
-        if name:
-            charset = part.get_content_charset() or "utf-8"
-            fields[name] = payload.decode(charset, errors="replace")
 
-    if not filename:
-        raise ApiError(400, "缺少上传 Excel 文件", "ValidationError")
-    if not file_bytes:
-        raise ApiError(400, "上传 Excel 文件不能为空", "ValidationError")
-    return fields, filename, file_bytes
+def _validate_upload_suffix(filename: str, allowed_suffixes: set[str] | None = None) -> None:
+    allowed = allowed_suffixes or {".xlsx"}
+    if _upload_suffix(filename) not in allowed:
+        raise ApiError(400, "only .xlsx uploads are allowed", "ValidationError")
+
+
+async def _close_upload_file(upload_file: UploadFile) -> None:
+    close = getattr(upload_file, "close", None)
+    if not callable(close):
+        return
+    result = close()
+    if inspect.isawaitable(result):
+        await result
+
+
+async def save_upload_file_stream(
+    upload_file: UploadFile,
+    target_path: Path,
+    max_bytes: int,
+    allowed_suffixes: set[str] | None = None,
+    chunk_size: int = 1024 * 1024,
+) -> int:
+    target = target_path.resolve()
+    temp_path = target.with_suffix(target.suffix + ".tmp")
+    target_existed = target.exists()
+    total_size = 0
+
+    try:
+        _validate_upload_suffix(str(getattr(upload_file, "filename", "") or ""), allowed_suffixes)
+        ensure_dir(target.parent)
+        with temp_path.open("wb") as handle:
+            while True:
+                chunk = await upload_file.read(chunk_size)
+                if not chunk:
+                    break
+                total_size += len(chunk)
+                if total_size > max_bytes:
+                    raise ApiError(413, f"upload exceeds {max_bytes // (1024 * 1024)}MB limit", "UploadTooLarge")
+                handle.write(chunk)
+        if total_size <= 0:
+            raise ApiError(400, "uploaded Excel file cannot be empty", "ValidationError")
+        temp_path.replace(target)
+        return total_size
+    except Exception:
+        for path in (temp_path, target):
+            if path == target and target_existed:
+                continue
+            try:
+                path.unlink()
+            except OSError:
+                pass
+        raise
+    finally:
+        await _close_upload_file(upload_file)
 
 
 def _new_upload_id() -> str:
@@ -444,19 +468,12 @@ def _validate_uploaded_workbook(path: Path) -> None:
         workbook.close()
 
 
-def _store_uploaded_xlsx(
+async def _store_uploaded_xlsx(
     output_root: Path,
     upload_id: str,
-    filename: str,
-    file_bytes: bytes,
+    upload_file: UploadFile,
     max_upload_bytes: int = MAX_UPLOAD_BYTES,
 ) -> dict:
-    suffix = Path(str(filename).replace("\\", "/")).suffix.lower()
-    if suffix != ".xlsx":
-        raise ApiError(400, "只允许上传 .xlsx 文件", "ValidationError")
-    if len(file_bytes) > max_upload_bytes:
-        raise ApiError(413, f"上传文件超过 {max_upload_bytes // (1024 * 1024)}MB 限制", "UploadTooLarge")
-
     upload_root = _uploads_root(output_root)
     target_dir = (upload_root / upload_id).resolve()
     if not _is_relative_to(target_dir, upload_root):
@@ -465,7 +482,7 @@ def _store_uploaded_xlsx(
     target = (target_dir / f"{upload_id}.xlsx").resolve()
     if target.parent != target_dir:
         raise ApiError(400, "上传路径不合法", "ValidationError")
-    target.write_bytes(file_bytes)
+    size = await save_upload_file_stream(upload_file, target, max_upload_bytes)
     try:
         _validate_uploaded_workbook(target)
     except Exception:
@@ -479,7 +496,7 @@ def _store_uploaded_xlsx(
         {
             "upload_id": upload_id,
             "file_name": f"{upload_id}.xlsx",
-            "size": len(file_bytes),
+            "size": size,
             "created_at": _now_iso(),
             "used_by_job_id": "",
             "path": str(target),
@@ -983,23 +1000,9 @@ def create_app(
             "result_page": f"/web/result.html?job_id={job_id}",
         }
 
-    async def parse_upload_request(request: Request) -> tuple[dict[str, str], str, bytes]:
-        try:
-            content_length = int(request.headers.get("content-length") or "0")
-        except ValueError:
-            content_length = 0
-        if content_length > max_upload_bytes:
-            raise ApiError(413, f"upload exceeds {max_upload_bytes // (1024 * 1024)}MB limit", "UploadTooLarge")
-
-        body = await request.body()
-        if len(body) > max_upload_bytes:
-            raise ApiError(413, f"upload exceeds {max_upload_bytes // (1024 * 1024)}MB limit", "UploadTooLarge")
-
-        return _parse_multipart_upload(str(request.headers.get("content-type") or ""), body)
-
-    def create_upload(filename: str, file_bytes: bytes) -> dict:
+    async def create_upload(upload_file: UploadFile) -> dict:
         upload_id = _new_upload_id()
-        return _store_uploaded_xlsx(output_root, upload_id, filename, file_bytes, max_upload_bytes)
+        return await _store_uploaded_xlsx(output_root, upload_id, upload_file, max_upload_bytes)
 
     def mark_upload_used(upload_id: str, job_id: str) -> None:
         payload = _read_upload_metadata(output_root, upload_id)
@@ -1147,9 +1150,8 @@ def create_app(
         }
 
     @app.post("/api/uploads/excel")
-    async def upload_excel(request: Request):
-        _fields, filename, file_bytes = await parse_upload_request(request)
-        return create_upload(filename, file_bytes)
+    async def upload_excel(file: UploadFile = File(...)):
+        return await create_upload(file)
 
     @app.get("/api/uploads")
     def upload_list(limit: int = Query(default=20, ge=1, le=100)):
@@ -1184,16 +1186,22 @@ def create_app(
         return start_uploaded_job(request.upload_id, request)
 
     @app.post("/api/extract/upload")
-    async def upload_extract(request: Request):
-        fields, filename, file_bytes = await parse_upload_request(request)
-        upload = create_upload(filename, file_bytes)
+    async def upload_extract(
+        file: UploadFile = File(...),
+        mode: str = Form("merge"),
+        no_ocr: bool = Form(True),
+        no_llm: bool = Form(False),
+        external_ocr_text: str = Form(""),
+        prompt_version: str = Form("v3"),
+    ):
+        upload = await create_upload(file)
         request_data = UploadedExtractRequest(
             upload_id=upload["upload_id"],
-            mode=str(fields.get("mode") or "merge"),
-            no_ocr=_parse_bool_form(fields.get("no_ocr"), True),
-            no_llm=_parse_bool_form(fields.get("no_llm"), False),
-            external_ocr_text=str(fields.get("external_ocr_text") or ""),
-            prompt_version=str(fields.get("prompt_version") or "v3"),
+            mode=str(mode or "merge"),
+            no_ocr=bool(no_ocr),
+            no_llm=bool(no_llm),
+            external_ocr_text=str(external_ocr_text or ""),
+            prompt_version=str(prompt_version or "v3"),
         )
         return start_uploaded_job(request_data.upload_id, request_data)
 
@@ -1236,22 +1244,42 @@ def create_app(
         raise ApiError(exc.status_code, exc.detail, exc.error_type)
 
     @app.post("/api/quality/evaluate")
-    async def quality_evaluate(request: Request):
-        fields, filename, file_bytes = await parse_upload_request(request)
+    async def quality_evaluate(
+        job_id: str = Form(...),
+        file: UploadFile = File(...),
+    ):
+        manual_filename = str(file.filename or "")
         try:
-            quality_service.validate_manual_upload(filename, file_bytes, max_upload_bytes)
-        except QualityServiceError as exc:
-            raise_quality_error(exc)
+            _validate_upload_suffix(manual_filename)
+            clean_job_id = str(job_id or "").strip()
+            if not clean_job_id:
+                raise ApiError(400, "job_id is required", "ValidationError")
+            job = read_job_or_404(clean_job_id)
+            generated_workbook = job_output_workbook_path(job)
+        except Exception:
+            await _close_upload_file(file)
+            raise
 
-        job_id = str(fields.get("job_id") or "").strip()
-        if not job_id:
-            raise ApiError(400, "job_id is required", "ValidationError")
-        job = read_job_or_404(job_id)
-        generated_workbook = job_output_workbook_path(job)
+        upload_root = (quality_service.root / "_uploads").resolve()
+        if not _is_relative_to(upload_root, quality_service.root):
+            await _close_upload_file(file)
+            raise ApiError(400, "quality upload path is invalid", "ValidationError")
+        ensure_dir(upload_root)
+        manual_upload_path = (upload_root / f"manual_{uuid.uuid4().hex}.xlsx").resolve()
+        if manual_upload_path.parent != upload_root:
+            await _close_upload_file(file)
+            raise ApiError(400, "quality upload path is invalid", "ValidationError")
+
         try:
-            return quality_service.evaluate(job_id, generated_workbook, filename, file_bytes, max_upload_bytes)
+            await save_upload_file_stream(file, manual_upload_path, max_upload_bytes)
+            return quality_service.evaluate_file(clean_job_id, generated_workbook, manual_filename, manual_upload_path, max_upload_bytes)
         except QualityServiceError as exc:
             raise_quality_error(exc)
+        finally:
+            try:
+                manual_upload_path.unlink()
+            except OSError:
+                pass
 
     @app.get("/api/quality/reports/{report_id}")
     def quality_report(report_id: str):

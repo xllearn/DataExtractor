@@ -1,5 +1,5 @@
 const selectedIds = new Set();
-const WEB_APP_VERSION = "20260702_workbench";
+const WEB_APP_VERSION = "0.3.0-productized";
 const POLL_INTERVAL_MS = 1500;
 const TERMINAL_STATUSES = new Set(["success", "failed", "cancelled", "archived"]);
 

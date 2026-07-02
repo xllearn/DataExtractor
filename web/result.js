@@ -1,4 +1,4 @@
-const WEB_APP_VERSION = "20260702_workbench";
+const WEB_APP_VERSION = "0.3.0-productized";
 const params = new URLSearchParams(window.location.search);
 const jobId = params.get("job_id") || "";
 const POLL_INTERVAL_MS = 1500;

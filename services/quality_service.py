@@ -1,5 +1,6 @@
 import json
 import re
+import shutil
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -37,6 +38,20 @@ class QualityService:
         if len(file_bytes) > max_bytes:
             raise QualityServiceError(413, f"上传文件超过 {max_bytes // (1024 * 1024)}MB 限制", "UploadTooLarge")
 
+    def validate_manual_upload_file(self, filename: str, manual_path: str | Path, max_bytes: int) -> None:
+        suffix = Path(str(filename).replace("\\", "/")).suffix.lower()
+        if suffix != ".xlsx":
+            raise QualityServiceError(400, "只允许上传 .xlsx 文件", "ValidationError")
+        path = Path(manual_path).resolve()
+        try:
+            size = path.stat().st_size
+        except OSError as exc:
+            raise QualityServiceError(400, "uploaded Excel file cannot be read", "ValidationError") from exc
+        if size <= 0:
+            raise QualityServiceError(400, "上传 Excel 文件不能为空", "ValidationError")
+        if size > max_bytes:
+            raise QualityServiceError(413, f"上传文件超过 {max_bytes // (1024 * 1024)}MB 限制", "UploadTooLarge")
+
     def evaluate(
         self,
         job_id: str,
@@ -55,6 +70,40 @@ class QualityService:
         if manual_path.parent != report_dir:
             raise QualityServiceError(400, "quality report path is invalid", "ValidationError")
         manual_path.write_bytes(manual_bytes)
+
+        report_xlsx = (report_dir / f"{report_id}.xlsx").resolve()
+        report_json = (report_dir / f"{report_id}.json").resolve()
+        if report_xlsx.parent != report_dir or report_json.parent != report_dir:
+            raise QualityServiceError(400, "quality report path is invalid", "ValidationError")
+
+        try:
+            result = run_quality_eval(generated, manual_path, report_xlsx, report_json)
+        except Exception as exc:
+            raise QualityServiceError(400, f"quality evaluation failed: {self._safe_text(exc)}", "QualityEvaluationFailed") from exc
+
+        summary = self._summary(report_id, job_id, result)
+        self._write_summary(report_id, summary)
+        return summary
+
+    def evaluate_file(
+        self,
+        job_id: str,
+        generated_workbook_path: str | Path,
+        manual_filename: str,
+        manual_upload_path: str | Path,
+        max_bytes: int,
+    ) -> dict:
+        self.validate_manual_upload_file(manual_filename, manual_upload_path, max_bytes)
+        generated = self._safe_generated_workbook_path(generated_workbook_path)
+        source = Path(manual_upload_path).resolve()
+        report_id = _new_report_id()
+        report_dir = self._report_dir(report_id)
+        ensure_dir(report_dir)
+
+        manual_path = (report_dir / "manual.xlsx").resolve()
+        if manual_path.parent != report_dir:
+            raise QualityServiceError(400, "quality report path is invalid", "ValidationError")
+        shutil.copyfile(source, manual_path)
 
         report_xlsx = (report_dir / f"{report_id}.xlsx").resolve()
         report_json = (report_dir / f"{report_id}.json").resolve()

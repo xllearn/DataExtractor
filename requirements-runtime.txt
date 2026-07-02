@@ -9,5 +9,6 @@ openai
 PyYAML
 SQLAlchemy
 fastapi
+python-multipart
 uvicorn
 httpx

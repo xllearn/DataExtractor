@@ -2,6 +2,17 @@
 
 ## 2026-07-02
 
+### A2 upload streaming and productized version
+
+- Replaced production upload parsing with FastAPI `UploadFile` / `Form` streaming for `POST /api/uploads/excel`, `POST /api/extract/upload`, and `POST /api/quality/evaluate`.
+- Added `save_upload_file_stream()` to write uploads in chunks, enforce `.xlsx`, remove partial temp files on 413, and close upload handles on success and rejection.
+- Kept uploaded workbook validation and safe generated filenames; responses and upload metadata still do not expose client-provided path names.
+- Added a path-based quality evaluation entrypoint so manual Excel uploads are streamed to a controlled temp file before report generation.
+- Updated `WEB_APP_VERSION` and frontend cache busting to `0.3.0-productized`.
+- Added `python-multipart` to runtime requirements.
+- Verification: `py -m pip install -r requirements-runtime.txt`; `py -m pip install -r requirements-dev.txt`; `py -m pytest -q`; `pytest -q` with Python 3.14 Scripts temporarily added to PATH; `curl.exe http://127.0.0.1:8000/api/version` returned `0.3.0-productized`.
+- Note: the bare `python` and `pytest` commands are not on this Windows PATH by default; the local Python launcher `py` and the Python 3.14 install were used for verification.
+
 ### A1 main.py pipeline boundary
 
 - Cleaned `main.py` pipeline imports to the CLI/API public interfaces: `create_empty_metadata` and `extract_record_rows`.

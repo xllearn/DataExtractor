@@ -702,7 +702,7 @@ Compose 会挂载：
 
 `/api/version` 用于确认当前后端版本，会返回 `project_root`、`cwd`、`git_commit`、`web_app_version` 和功能开关，不返回数据库连接串、API Key 或密码。启动 API 时终端也会打印脱敏后的有效配置，方便排查是否仍在运行旧目录、旧分支或旧进程。
 
-首页和结果页脚本使用版本参数加载，例如 `/web/app.js?v=20260701_job_fix` 和 `/web/result.js?v=20260701_job_fix`，用于避免浏览器继续执行旧版脚本造成 DOM id 不匹配或把 Excel 文件名当作 job_id。若页面曾打开过旧版本，请先重启后端，再用 `Ctrl+F5` 强制刷新；如果浏览器仍加载旧 JS，可清缓存或用无痕窗口打开。
+首页和结果页脚本使用版本参数加载，例如 `/web/app.js?v=0.3.0-productized` 和 `/web/result.js?v=0.3.0-productized`，用于避免浏览器继续执行旧版脚本造成 DOM id 不匹配或把 Excel 文件名当作 job_id。若页面曾打开过旧版本，请先重启后端，再用 `Ctrl+F5` 强制刷新；如果浏览器仍加载旧 JS，可清缓存或用无痕窗口打开。
 
 ### 综合验收
 
