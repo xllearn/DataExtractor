@@ -19,6 +19,12 @@ query:
   default_limit: 50
   keyword_mode: "or"
 
+writeback:
+  enabled: false
+  target_table: ""
+  key_column: "info_id"
+  allowed_columns: []
+
 direct_field_columns:
   文章时间: "AuditTime"
   审核日期: ""

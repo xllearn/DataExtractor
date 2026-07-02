@@ -41,11 +41,20 @@ class QueryConfig:
 
 
 @dataclass
+class WritebackConfig:
+    enabled: bool = False
+    target_table: str = ""
+    key_column: str = "info_id"
+    allowed_columns: List[str] = field(default_factory=list)
+
+
+@dataclass
 class DbConfig:
     exists: bool = False
     database_url: str = ""
     source: SourceConfig = field(default_factory=SourceConfig)
     query: QueryConfig = field(default_factory=QueryConfig)
+    writeback: WritebackConfig = field(default_factory=WritebackConfig)
     direct_field_columns: Dict[str, str] = field(default_factory=dict)
     path: Optional[Path] = None
 
@@ -86,6 +95,22 @@ def _as_mapping(value: Any, name: str) -> Dict[str, Any]:
     return value
 
 
+def _as_bool(value: Any, name: str, default: bool = False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int) and value in {0, 1}:
+        return bool(value)
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"true", "1", "yes", "y", "on"}:
+            return True
+        if normalized in {"false", "0", "no", "n", "off", ""}:
+            return False
+    raise ConfigError(f"{name} 必须是布尔值")
+
+
 def load_db_config(path: str | Path | None, require_ready: bool = False) -> DbConfig:
     _load_dotenv_once()
     config_path = Path(path) if path else PROJECT_ROOT / "config" / "db_config.yml"
@@ -103,6 +128,7 @@ def load_db_config(path: str | Path | None, require_ready: bool = False) -> DbCo
     database = _as_mapping(payload.get("database"), "database")
     source_payload = _as_mapping(payload.get("source"), "source")
     query_payload = _as_mapping(payload.get("query"), "query")
+    writeback_payload = _as_mapping(payload.get("writeback"), "writeback")
     direct_field_columns = {
         str(key): "" if value is None else str(value).strip()
         for key, value in _as_mapping(payload.get("direct_field_columns"), "direct_field_columns").items()
@@ -116,11 +142,21 @@ def load_db_config(path: str | Path | None, require_ready: bool = False) -> DbCo
         default_limit=int(query_payload.get("default_limit", 50) or 50),
         keyword_mode=keyword_mode,
     )
+    allowed_columns = writeback_payload.get("allowed_columns") or []
+    if not isinstance(allowed_columns, list):
+        raise ConfigError("writeback.allowed_columns 必须是 YAML 列表")
+    writeback = WritebackConfig(
+        enabled=_as_bool(writeback_payload.get("enabled", False), "writeback.enabled"),
+        target_table=str(writeback_payload.get("target_table", "") or "").strip(),
+        key_column=str(writeback_payload.get("key_column", "info_id") or "info_id").strip(),
+        allowed_columns=[str(column or "").strip() for column in allowed_columns if str(column or "").strip()],
+    )
     config = DbConfig(
         exists=True,
         database_url=str(database.get("url", "") or "").strip(),
         source=source,
         query=query,
+        writeback=writeback,
         direct_field_columns=direct_field_columns,
         path=config_path,
     )

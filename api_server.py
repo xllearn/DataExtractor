@@ -20,7 +20,7 @@ from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from openpyxl import load_workbook
-from pydantic import BaseModel
+from pydantic import BaseModel, StrictBool
 
 from config import PROJECT_ROOT, apply_llm_config, load_settings
 from config_loader import ConfigError, load_db_config, parse_selected_ids, validate_db_config_ready
@@ -34,6 +34,7 @@ from services.extraction_service import ExtractionService
 from services.job_store import JobStore, JobStoreError
 from services.quality_service import QualityService, QualityServiceError
 from services.review_service import ReviewService, ReviewServiceError
+from services.writeback_service import WritebackService, WritebackServiceError
 from utils import ensure_dir
 
 
@@ -72,6 +73,15 @@ class ReviewItemUpdateRequest(BaseModel):
     action: str = ""
     reviewed_value: Optional[str] = None
     comment: str = ""
+
+
+class WritebackPreviewRequest(BaseModel):
+    dry_run: StrictBool = True
+
+
+class WritebackCommitRequest(BaseModel):
+    preview_id: str
+    dry_run: StrictBool = True
 
 
 class ApiError(Exception):
@@ -647,6 +657,7 @@ def create_app(
     record_provider: Optional[Callable[..., list]] = None,
     extract_runner: Optional[Callable[[List[str], str, bool, bool], Path]] = None,
     extraction_service: Optional[Any] = None,
+    writeback_service: Optional[Any] = None,
     use_subprocess_runner: bool = False,
 ) -> FastAPI:
     output_root = Path(output_dir)
@@ -686,6 +697,7 @@ def create_app(
     job_store = JobStore(output_root)
     review_service = ReviewService(output_root)
     quality_service = QualityService(output_root)
+    active_writeback_service = writeback_service or WritebackService(output_root, config_path=config_path)
     executor = ThreadPoolExecutor(max_workers=2)
     jobs: dict[str, dict] = {}
     cancelled_jobs: set[str] = set()
@@ -1180,6 +1192,9 @@ def create_app(
     def raise_quality_error(exc: QualityServiceError) -> None:
         raise ApiError(exc.status_code, exc.detail, exc.error_type)
 
+    def raise_writeback_error(exc: WritebackServiceError) -> None:
+        raise ApiError(exc.status_code, exc.detail, exc.error_type)
+
     @app.post("/api/quality/evaluate")
     async def quality_evaluate(request: Request):
         fields, filename, file_bytes = await parse_upload_request(request)
@@ -1216,6 +1231,29 @@ def create_app(
             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             filename=path.name,
         )
+
+    @app.post("/api/jobs/{job_id}/writeback/preview")
+    def job_writeback_preview(job_id: str, request: WritebackPreviewRequest):
+        job = read_job_or_404(job_id)
+        workbook_path = job_output_workbook_path(job)
+        try:
+            return active_writeback_service.preview(job_id, workbook_path, dry_run=request.dry_run)
+        except WritebackServiceError as exc:
+            raise_writeback_error(exc)
+
+    @app.post("/api/jobs/{job_id}/writeback/commit")
+    def job_writeback_commit(job_id: str, request: WritebackCommitRequest):
+        job = read_job_or_404(job_id)
+        workbook_path = job_output_workbook_path(job)
+        try:
+            return active_writeback_service.commit(
+                job_id,
+                workbook_path,
+                preview_id=request.preview_id,
+                dry_run=request.dry_run,
+            )
+        except WritebackServiceError as exc:
+            raise_writeback_error(exc)
 
     @app.get("/api/jobs/{job_id}")
     def job_status(job_id: str):

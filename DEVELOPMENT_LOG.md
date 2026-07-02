@@ -725,3 +725,14 @@ Continue optimization on `codex/db-to-excel-extractor`: start the project first,
 - Red TDD check: `py -m pytest tests/test_api_quality.py -q` failed as expected with missing quality API routes and non-unified 404 payloads.
 - Verification: `py -m pytest tests/test_api_quality.py -q` passed, output `... [100%]` with the existing FastAPI/Starlette deprecation warning.
 - Regression verification: `py -m pytest tests/test_api_quality.py tests/test_api_server.py tests/test_api_review.py tests/test_web_app_static.py tests/test_core.py -q` passed, output `............................................ [100%]` with the existing FastAPI/Starlette deprecation warning.
+
+## 2026-07-02 Phase 3 Task 7
+
+- Added disabled-by-default writeback configuration under `writeback` with `enabled`, `target_table`, `key_column`, and `allowed_columns`.
+- Added `services/writeback_service.py` for controlled workbook-to-database writeback preview and commit. Preview reads the `结果数据` sheet, validates table/column identifiers through `db_reader`, counts matching target rows with parameterized SQL, stores preview state under `output_root/writeback/<job_id>/`, and writes audit JSONL.
+- Added `POST /api/jobs/{job_id}/writeback/preview` and `POST /api/jobs/{job_id}/writeback/commit`. Commit requires an existing preview, rejects changed config/workbook fingerprints, defaults to dry-run, and only writes configured allowed columns when `dry_run=false`.
+- Public responses and audit events avoid database URLs, passwords/secrets, and absolute paths; tests use temporary SQLite only.
+- Red TDD check: `py -m pytest tests/test_writeback_preview.py -q` failed as expected with 5 failures because the writeback routes were not implemented.
+- Review hardening added regressions for quoted `writeback.enabled: "false"`, strict JSON boolean `dry_run`, and audit-write failure before a real commit. The red check failed as expected with 3 failures against the initial implementation.
+- Verification: `py -m pytest tests/test_writeback_preview.py -q` passed, output `........ [100%]` with the existing FastAPI/Starlette deprecation warning.
+- Regression verification: `py -m pytest tests/test_writeback_preview.py tests/test_api_server.py tests/test_api_review.py tests/test_api_quality.py tests/test_web_app_static.py tests/test_core.py -q` passed, output `.................................................... [100%]` with the existing FastAPI/Starlette deprecation warning.
