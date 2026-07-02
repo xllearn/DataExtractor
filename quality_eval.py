@@ -152,14 +152,27 @@ def run_quality_eval(
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Evaluate generated extraction workbook against a manually reviewed workbook.")
-    parser.add_argument("generated_xlsx")
-    parser.add_argument("manual_xlsx")
-    parser.add_argument("--output-xlsx", default="reports/quality_eval.xlsx")
-    parser.add_argument("--output-json", default="reports/quality_eval.json")
+    parser = argparse.ArgumentParser(
+        description="Evaluate generated extraction workbook against a manually reviewed workbook.",
+        allow_abbrev=False,
+    )
+    parser.add_argument("positional_generated_xlsx", nargs="?")
+    parser.add_argument("positional_manual_xlsx", nargs="?")
+    parser.add_argument("--generated", dest="generated_xlsx")
+    parser.add_argument("--manual", dest="manual_xlsx")
+    parser.add_argument("--output-xlsx", "--output", dest="output_xlsx", default="reports/quality_eval.xlsx")
+    parser.add_argument("--output-json", "--json-output", dest="output_json", default="reports/quality_eval.json")
     parser.add_argument("--thresholds", default="config/quality_thresholds.yml")
     args = parser.parse_args()
-    result = run_quality_eval(args.generated_xlsx, args.manual_xlsx, args.output_xlsx, args.output_json, args.thresholds)
+    generated_xlsx = args.generated_xlsx or args.positional_generated_xlsx
+    manual_xlsx = args.manual_xlsx or args.positional_manual_xlsx
+    if not generated_xlsx and not manual_xlsx:
+        parser.error("generated and manual workbooks are required; pass --generated/--manual or positional generated_xlsx manual_xlsx.")
+    if not generated_xlsx:
+        parser.error("generated workbook is required; pass --generated or positional generated_xlsx.")
+    if not manual_xlsx:
+        parser.error("manual workbook is required; pass --manual or positional manual_xlsx.")
+    result = run_quality_eval(generated_xlsx, manual_xlsx, args.output_xlsx, args.output_json, args.thresholds)
     print(json.dumps({"passed": result["passed"], "overall_similarity": result["overall_similarity"]}, ensure_ascii=False))
     return 0 if result["passed"] else 2
 

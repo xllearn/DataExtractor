@@ -1,5 +1,14 @@
 # DataExtractor Development Log
 
+## 2026-07-02
+
+### A1 main.py pipeline boundary
+
+- Cleaned `main.py` pipeline imports to the CLI/API public interfaces: `create_empty_metadata` and `extract_record_rows`.
+- Kept local compatibility alias `_empty_metadata = create_empty_metadata`.
+- Added import-boundary lint coverage and updated stale tests to import pipeline internals from `pipeline`.
+- Verification: `py -m pytest tests/test_import_lint_boundaries.py -q`; affected pytest subset passed.
+
 ## 2026-06-30
 
 ### 本轮目标
@@ -637,3 +646,25 @@ Continue optimization on `codex/db-to-excel-extractor`: start the project first,
 
 - No `.env`, API keys, database credentials, generated Excel files, `logs/`, `outputs/`, or `temp_images/` are committed.
 - The pre-existing untracked `Q57D2088.tmp` remains untracked and is not part of this task.
+
+## 2026-07-02 A2
+
+- Fixed row-alignment match fields to use the authoritative fixed headers for `标化类型` and `就诊地域`.
+- Added configurable alignment thresholds in `config/quality_thresholds.yml` and row-match evidence labels for strong, weak, and below-threshold matches.
+- Verification: `py -m pytest tests/test_record_alignment.py tests/test_record_fusion.py -q` passed, 17 tests.
+
+## 2026-07-02 A3
+
+- Enhanced field confidence scoring with collection-log deductions, final-attempt row-match evidence, source/table text corroboration, and human-confirmed review status bonus.
+- Expanded `字段置信度` and `人工复核` sheet metadata, including match level, review status, evidence id, attempt, reviewed value/comment placeholders, and exact review headers.
+- Pipeline now passes the final attempt's row-match evidence plus source/table text into confidence and review generation without changing the 26-column result sheet order.
+- Red TDD check: `py -m pytest tests/test_field_confidence.py tests/test_excel_writer_review.py -q` failed as expected with missing `review_status`, unsupported `row_match_evidence`, and old sheet headers.
+- Verification: `py -m pytest tests/test_field_confidence.py tests/test_excel_writer_review.py tests/test_record_alignment.py tests/test_record_fusion.py -q` passed, 22 tests.
+
+## 2026-07-02 A4
+
+- Added `quality_eval.py` CLI compatibility for both legacy positional arguments and the named `--generated/--manual` form.
+- Added `--output` as the xlsx output alias and `--json-output` as the JSON output alias; named input paths intentionally override positional paths when both are provided.
+- Updated README to recommend the named CLI form while documenting legacy positional compatibility.
+- Red TDD check: `py -m pytest tests/test_quality_eval_cli.py -q` failed as expected with 3 failures for unsupported named/alias arguments and unclear missing-manual handling.
+- Verification: `py -m pytest tests/test_quality_eval_cli.py -q` passed, output `..... [100%]`.

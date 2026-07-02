@@ -63,7 +63,7 @@ class ConfidenceScoringTests(unittest.TestCase):
 
 class RetryFlowTests(unittest.TestCase):
     def test_retry_attempt_selection_keeps_initial_when_retry_is_worse(self):
-        from main import choose_final_attempt
+        from pipeline import choose_final_attempt
 
         self.assertEqual(
             choose_final_attempt(

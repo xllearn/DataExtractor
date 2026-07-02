@@ -52,7 +52,7 @@ class CliRuntimeModeTests(unittest.TestCase):
         self.assertTrue(flags["no_excel"])
 
     def test_save_intermediate_writes_json_file(self):
-        from main import save_intermediate_result
+        from pipeline import save_intermediate_result
 
         with tempfile.TemporaryDirectory() as tmp:
             path = save_intermediate_result(

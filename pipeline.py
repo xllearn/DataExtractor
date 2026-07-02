@@ -50,9 +50,26 @@ def _append_confidence_metadata(
     rows: List[Dict[str, Any]],
     field_evidence: List[Dict[str, Any]],
     conflicts: List[Dict[str, Any]],
+    row_match_evidence: List[Dict[str, Any]] | None = None,
+    source_text: str = "",
+    table_text: str = "",
 ) -> None:
-    confidence_rows = calculate_field_confidence(rows, field_evidence, conflicts, metadata.get("collection_logs", []))
-    review_rows = build_review_rows(rows, confidence_rows, conflicts, metadata.get("collection_logs", []))
+    confidence_rows = calculate_field_confidence(
+        rows,
+        field_evidence,
+        conflicts,
+        metadata.get("collection_logs", []),
+        row_match_evidence=row_match_evidence or [],
+        source_text=source_text,
+        table_text=table_text,
+    )
+    review_rows = build_review_rows(
+        rows,
+        confidence_rows,
+        conflicts,
+        metadata.get("collection_logs", []),
+        row_match_evidence=row_match_evidence or [],
+    )
     metadata["field_confidence"].extend(confidence_rows)
     metadata["review_rows"].extend(review_rows)
 
@@ -347,7 +364,15 @@ def extract_record_rows(
                 "final_attempt": "initial",
             }
         )
-        _append_confidence_metadata(metadata, initial_rows, initial_field_evidence, initial_conflicts)
+        _append_confidence_metadata(
+            metadata,
+            initial_rows,
+            initial_field_evidence,
+            initial_conflicts,
+            initial_row_match_evidence,
+            source_text=parsed.clean_text,
+            table_text=parsed.tables_text,
+        )
         if save_intermediate:
             save_intermediate_result(
                 logs_dir,
@@ -429,7 +454,15 @@ def extract_record_rows(
                 "final_attempt": "initial",
             }
         )
-        _append_confidence_metadata(metadata, initial_rows, initial_field_evidence, initial_conflicts)
+        _append_confidence_metadata(
+            metadata,
+            initial_rows,
+            initial_field_evidence,
+            initial_conflicts,
+            initial_row_match_evidence,
+            source_text=parsed.clean_text,
+            table_text=parsed.tables_text,
+        )
         if save_intermediate:
             save_intermediate_result(
                 logs_dir,
@@ -532,7 +565,16 @@ def extract_record_rows(
     )
     final_field_evidence = retry_field_evidence if final_attempt == "ocr_retry" else initial_field_evidence
     final_conflicts = retry_conflicts if final_attempt == "ocr_retry" else initial_conflicts
-    _append_confidence_metadata(metadata, final_rows, final_field_evidence, final_conflicts)
+    final_row_match_evidence = retry_row_match_evidence if final_attempt == "ocr_retry" else initial_row_match_evidence
+    _append_confidence_metadata(
+        metadata,
+        final_rows,
+        final_field_evidence,
+        final_conflicts,
+        final_row_match_evidence,
+        source_text=parsed.clean_text,
+        table_text=parsed.tables_text,
+    )
     logger.info("OCR 前 confidence_score=%s, OCR 后 confidence_score=%s, improved=%s, final_attempt=%s", initial_score, retry_score, retry_score > initial_score, final_attempt)
     if save_intermediate:
         save_intermediate_result(

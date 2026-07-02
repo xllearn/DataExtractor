@@ -1,3 +1,6 @@
 low_confidence: 0.7
 minimum_overall_similarity: 0.85
 minimum_core_field_similarity: 0.85
+alignment:
+  min_similarity: 0.55
+  strong_similarity: 0.82

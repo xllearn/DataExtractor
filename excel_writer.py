@@ -213,8 +213,40 @@ EXTRACT_EVAL_HEADERS = [
     "key_field_score",
     "ocr_risk_score",
 ]
-FIELD_CONFIDENCE_HEADERS = ["row_index", "field", "value", "confidence", "source", "evidence_count", "conflict_count", "reason", "evidence", "evidence_ids"]
-REVIEW_ROW_HEADERS = ["row_index", "field", "value", "confidence", "reason", "suggested_action", "title", "source_url", "evidence"]
+FIELD_CONFIDENCE_HEADERS = [
+    "row_index",
+    "field",
+    "value",
+    "confidence",
+    "source",
+    "evidence_count",
+    "conflict_count",
+    "match_level",
+    "needs_review",
+    "attempt",
+    "review_status",
+    "reason",
+    "evidence",
+    "evidence_ids",
+]
+REVIEW_ROW_HEADERS = [
+    "source_id",
+    "info_id",
+    "title",
+    "source_url",
+    "row_index",
+    "field",
+    "current_value",
+    "confidence",
+    "reason",
+    "evidence",
+    "evidence_id",
+    "attempt",
+    "review_status",
+    "reviewed_value",
+    "review_comment",
+    "suggested_action",
+]
 ROW_MATCH_HEADERS = ["record_index", "attempt", "source_a", "source_b", "row_a", "row_b", "similarity", "matched_fields", "reason", "candidate_index"]
 FAILED_RECORD_HEADERS = ["phase", "record_index", "source_id", "info_id", "Title", "SourceURL", "error"]
 
