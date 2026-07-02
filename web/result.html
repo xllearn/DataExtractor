@@ -20,9 +20,37 @@
         <div class="result-state">
           <span id="statusText" class="result-badge">读取任务状态...</span>
           <span id="previewMeta" class="metric-chip">结果数据 · 等待生成</span>
+          <span id="previewStatusText" class="metric-chip">预览等待中</span>
         </div>
         <span id="riskText" class="warning"></span>
-        <a id="downloadBtn" href="#" hidden>下载 Excel</a>
+        <div class="job-actions result-actions">
+          <a id="downloadBtn" class="action-link" href="#" hidden>下载 Excel</a>
+          <button id="cancelBtn" type="button" disabled>取消</button>
+        </div>
+      </section>
+
+      <section class="current-job-panel">
+        <header class="panel-header">
+          <div>
+            <h2>任务进度</h2>
+            <p id="currentTitleText">当前文章：--</p>
+          </div>
+        </header>
+        <div class="job-metrics">
+          <span id="jobProgressText" class="metric-chip">0 / 0</span>
+        </div>
+        <progress id="jobProgressBar" class="job-progress" max="100" value="0"></progress>
+      </section>
+
+      <section class="workbench-grid result-workbench" aria-label="任务详情">
+        <section class="workbench-panel log-panel">
+          <h2>实时日志</h2>
+          <pre id="jobLogTail" class="job-log-tail">暂无日志</pre>
+        </section>
+        <section class="workbench-panel summary-panel" id="jobSummaryPanel">
+          <h2>Summary</h2>
+          <p>暂无 summary</p>
+        </section>
       </section>
 
       <section class="preview">
@@ -34,6 +62,6 @@
         </div>
       </section>
     </main>
-    <script src="/web/result.js?v=20260701_image_table"></script>
+    <script src="/web/result.js?v=20260702_workbench"></script>
   </body>
 </html>

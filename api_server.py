@@ -49,6 +49,7 @@ class ExtractRequest(BaseModel):
     no_ocr: bool = True
     no_llm: bool = False
     external_ocr_text: str = ""
+    prompt_version: str = "v3"
 
 
 class ApiError(Exception):
@@ -184,7 +185,14 @@ def _default_record_provider(config_path: str):
 
 
 def _default_extract_runner(config_path: str, field_config_path: str, llm_config_path: str, output_dir: Path, log_dir: Path):
-    def runner(selected_ids: List[str], mode: str, no_ocr: bool, no_llm: bool, external_ocr_text: str = "") -> Path:
+    def runner(
+        selected_ids: List[str],
+        mode: str,
+        no_ocr: bool,
+        no_llm: bool,
+        external_ocr_text: str = "",
+        prompt_version: str = "v3",
+    ) -> Path:
         ensure_dir(output_dir)
         ensure_dir(log_dir)
         started_at = time.time()
@@ -205,6 +213,8 @@ def _default_extract_runner(config_path: str, field_config_path: str, llm_config
             str(output_dir),
             "--log-dir",
             str(log_dir),
+            "--prompt-version",
+            (prompt_version or "v3").strip() or "v3",
             "--save-intermediate",
         ]
         if no_ocr:
@@ -264,9 +274,34 @@ def _pagination_payload(items: list, total: int, limit: int, offset: int) -> dic
     }
 
 
-def _call_runner(runner: Callable, selected: List[str], mode: str, no_ocr: bool, no_llm: bool, external_ocr_text: str) -> Path:
+def _call_runner(
+    runner: Callable,
+    selected: List[str],
+    mode: str,
+    no_ocr: bool,
+    no_llm: bool,
+    external_ocr_text: str,
+    prompt_version: str,
+) -> Path:
+    args = [selected, mode, no_ocr, no_llm, external_ocr_text]
     try:
-        return Path(runner(selected, mode, no_ocr, no_llm, external_ocr_text))
+        parameters = inspect.signature(runner).parameters
+        positional_count = sum(
+            1
+            for parameter in parameters.values()
+            if parameter.kind in {inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD}
+        )
+        supports_prompt_version = (
+            any(parameter.kind == inspect.Parameter.VAR_POSITIONAL for parameter in parameters.values())
+            or "prompt_version" in parameters
+            or positional_count >= 6
+        )
+    except (TypeError, ValueError):
+        supports_prompt_version = True
+    if supports_prompt_version:
+        args.append((prompt_version or "v3").strip() or "v3")
+    try:
+        return Path(runner(*args))
     except TypeError:
         return Path(runner(selected, mode, no_ocr, no_llm))
 
@@ -580,7 +615,15 @@ def create_app(
             try:
                 service_result = None
                 if runner is not None:
-                    output_path = _call_runner(runner, selected, request.mode, request.no_ocr, request.no_llm, request.external_ocr_text)
+                    output_path = _call_runner(
+                        runner,
+                        selected,
+                        request.mode,
+                        request.no_ocr,
+                        request.no_llm,
+                        request.external_ocr_text,
+                        request.prompt_version,
+                    )
                 else:
                     service_request = ServiceExtractionRequest(
                         selected_ids=selected,
@@ -588,6 +631,7 @@ def create_app(
                         no_ocr=request.no_ocr,
                         no_llm=request.no_llm,
                         external_ocr_text=request.external_ocr_text,
+                        prompt_version=request.prompt_version,
                         job_id=job_id,
                     )
 

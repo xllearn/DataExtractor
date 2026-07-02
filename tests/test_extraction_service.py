@@ -81,6 +81,7 @@ def test_extraction_service_runs_selected_ids_without_subprocess_or_real_depende
                 no_ocr=True,
                 no_llm=True,
                 external_ocr_text="external text",
+                prompt_version="v2",
             )
         )
 
@@ -88,6 +89,7 @@ def test_extraction_service_runs_selected_ids_without_subprocess_or_real_depende
         assert len(pipeline_calls) == 1
         assert pipeline_calls[0]["input_mode"] == "configured-db"
         assert pipeline_calls[0]["external_ocr_text"] == "external text"
+        assert pipeline_calls[0]["prompt_version"] == "v2"
         assert pipeline_calls[0]["llm_client"] is None
         assert pipeline_calls[0]["ocr_enabled"] is False
         assert pipeline_calls[0]["run_id"] == result.run_id

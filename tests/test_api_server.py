@@ -323,11 +323,15 @@ class ApiServerTests(unittest.TestCase):
                 )
             )
 
-            created = client.post("/api/extract", json={"selected_ids": ["svc-1"], "mode": "merge", "no_ocr": True}).json()
+            created = client.post(
+                "/api/extract",
+                json={"selected_ids": ["svc-1"], "mode": "merge", "no_ocr": True, "prompt_version": "v2"},
+            ).json()
             job = self._wait_job(client, created["job_id"])
             listed = client.get("/api/jobs").json()
             preview = client.get(job["preview_url"])
             metadata_path = output_dir / "jobs" / f"{created['job_id']}.json"
+            self.assertEqual(calls[0].prompt_version, "v2")
             raw_metadata = metadata_path.read_text(encoding="utf-8")
             raw_payload = json.loads(raw_metadata)
 

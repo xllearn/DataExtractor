@@ -130,6 +130,8 @@ p {
 .command-panel,
 .selection-panel,
 .result-summary,
+.workbench-panel,
+.current-job-panel,
 .table-card,
 .table-scroll {
   border: 1px solid var(--line);
@@ -145,12 +147,13 @@ p {
 
 .controls {
   display: grid;
-  grid-template-columns: minmax(260px, 390px) auto auto auto minmax(130px, auto);
+  grid-template-columns: minmax(260px, 1fr) auto auto;
   align-items: center;
   gap: 12px;
 }
 
 input[type="search"],
+input[type="text"],
 select,
 textarea {
   border: 1px solid #c8d4e4;
@@ -166,6 +169,12 @@ input[type="search"] {
   padding: 0 13px;
 }
 
+input[type="text"] {
+  width: 100%;
+  height: 40px;
+  padding: 0 11px;
+}
+
 select {
   height: 40px;
   padding: 0 34px 0 11px;
@@ -178,8 +187,47 @@ textarea {
   resize: vertical;
 }
 
+.extract-settings {
+  display: flex;
+  align-items: end;
+  flex-wrap: wrap;
+  gap: 14px;
+  margin-top: 14px;
+}
+
+.segmented-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.segmented-control legend {
+  margin-right: 2px;
+  color: var(--muted);
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.segmented-control label,
+.field-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.field-row {
+  min-width: 190px;
+}
+
 button,
-a#downloadBtn {
+a#downloadBtn,
+a.action-link {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -197,7 +245,8 @@ a#downloadBtn {
 }
 
 button:hover,
-a#downloadBtn:hover {
+a#downloadBtn:hover,
+a.action-link:hover {
   background: var(--blue-dark);
   border-color: var(--blue-dark);
 }
@@ -286,6 +335,194 @@ td input {
   display: none;
 }
 
+.workbench-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(360px, 0.85fr);
+  gap: 14px;
+  margin-bottom: 16px;
+}
+
+.result-workbench {
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 0.75fr);
+}
+
+.job-history {
+  min-width: 0;
+}
+
+.current-job-panel,
+.workbench-panel {
+  min-width: 0;
+  padding: 16px;
+}
+
+.result-shell > .current-job-panel {
+  margin-bottom: 14px;
+}
+
+.panel-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 12px;
+}
+
+.panel-header h2,
+.log-panel h2,
+.summary-panel h2,
+.log-panel h3,
+.summary-panel h3 {
+  margin: 0;
+  color: var(--text);
+  font-size: 18px;
+  line-height: 1.25;
+  letter-spacing: 0;
+}
+
+.panel-header p {
+  overflow-wrap: anywhere;
+}
+
+.job-metrics {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 9px;
+  margin-bottom: 12px;
+}
+
+.job-progress {
+  display: block;
+  width: 100%;
+  height: 14px;
+  margin-bottom: 14px;
+  overflow: hidden;
+  border: 0;
+  border-radius: 999px;
+  background: var(--line-soft);
+}
+
+.job-progress::-webkit-progress-bar {
+  background: var(--line-soft);
+}
+
+.job-progress::-webkit-progress-value {
+  border-radius: 999px;
+  background: var(--green);
+}
+
+.job-progress::-moz-progress-bar {
+  border-radius: 999px;
+  background: var(--green);
+}
+
+.job-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.result-actions {
+  margin-bottom: 0;
+}
+
+.job-panel-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(260px, 0.8fr);
+  gap: 14px;
+}
+
+.log-panel,
+.summary-panel {
+  min-width: 0;
+}
+
+.job-log-tail,
+.summary-panel pre {
+  width: 100%;
+  max-height: 260px;
+  margin: 8px 0 0;
+  padding: 12px;
+  overflow: auto;
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  background: #0f172a;
+  color: #e5edf8;
+  font-family: Consolas, "Courier New", monospace;
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.summary-panel pre {
+  background: #f8fbff;
+  color: var(--text);
+}
+
+.summary-panel p {
+  margin-top: 8px;
+}
+
+.history-scroll {
+  width: 100%;
+  overflow: auto;
+}
+
+.history-table {
+  min-width: 780px;
+}
+
+.history-table th,
+.history-table td {
+  height: 46px;
+  padding: 8px 10px;
+  font-size: 14px;
+  vertical-align: top;
+}
+
+.history-table td:first-child {
+  max-width: 260px;
+  overflow-wrap: anywhere;
+}
+
+.history-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.table-action-link,
+.table-action-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 30px;
+  padding: 0 9px;
+  border: 1px solid #bfd2f6;
+  border-radius: 7px;
+  background: var(--blue-soft);
+  color: var(--blue);
+  font-size: 13px;
+  font-weight: 700;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.table-action-button {
+  cursor: pointer;
+}
+
+.table-action-link:hover,
+.table-action-button:hover {
+  background: #dceaff;
+  color: var(--blue-dark);
+}
+
 .pagination-bar,
 .pagination {
   display: flex;
@@ -298,7 +535,11 @@ td input {
 .pagination-bar button:first-child,
 .pagination button:first-child,
 #clearSelectionBtn,
-#backBtn {
+#backBtn,
+#jobRefreshBtn,
+#historyRefreshBtn,
+#jobSummaryBtn,
+.action-link-secondary {
   border-color: #bfd2f6;
   background: var(--blue-soft);
   color: var(--blue);
@@ -307,7 +548,11 @@ td input {
 .pagination-bar button:first-child:hover,
 .pagination button:first-child:hover,
 #clearSelectionBtn:hover,
-#backBtn:hover {
+#backBtn:hover,
+#jobRefreshBtn:hover,
+#historyRefreshBtn:hover,
+#jobSummaryBtn:hover,
+.action-link-secondary:hover {
   border-color: #a8c4f5;
   background: #dceaff;
   color: var(--blue-dark);
@@ -511,17 +756,42 @@ th {
 
   .app-header,
   .selection-panel,
+  .panel-header,
   .result-summary {
     align-items: stretch;
     flex-direction: column;
   }
 
-  .controls {
+  .controls,
+  .workbench-grid,
+  .result-workbench,
+  .job-panel-grid {
     grid-template-columns: 1fr;
   }
 
+  .extract-settings {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .segmented-control,
+  .field-row {
+    width: 100%;
+  }
+
   button,
-  a#downloadBtn {
+  a#downloadBtn,
+  a.action-link {
+    width: 100%;
+  }
+
+  .history-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .table-action-link,
+  .table-action-button {
     width: 100%;
   }
 

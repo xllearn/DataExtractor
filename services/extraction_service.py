@@ -34,6 +34,7 @@ class ExtractionRequest:
     no_ocr: bool = True
     no_llm: bool = False
     external_ocr_text: str = ""
+    prompt_version: str = "v3"
     keyword: str = ""
     input_xlsx: str = ""
     offset: int = 0
@@ -183,6 +184,7 @@ class ExtractionService:
                     save_intermediate=request.save_intermediate,
                     metadata=record_metadata,
                     external_ocr_text=request.external_ocr_text,
+                    prompt_version=(request.prompt_version or "v3").strip() or "v3",
                     ocr_status=ocr_status,
                     ocr_skipped_reason=ocr_skipped_reason,
                     vision_client=vision_client,

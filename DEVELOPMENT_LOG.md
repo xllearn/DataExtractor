@@ -686,3 +686,13 @@ Continue optimization on `codex/db-to-excel-extractor`: start the project first,
 - Added job-level APIs for logs, summary, download, and cancel with tail limits, level filtering, path-bound reads, and sensitive text/query masking.
 - Red TDD check: `py -m pytest tests/test_job_store.py tests/test_extraction_service.py tests/test_api_server.py -q` failed as expected on missing progress fields, progress/cancel service hooks, and missing job logs/download/cancel endpoints.
 - Verification: `py -m pytest tests/test_job_store.py tests/test_extraction_service.py tests/test_api_server.py -q` passed, output `....................... [100%]` with the existing FastAPI/Starlette deprecation warning.
+
+## 2026-07-02 Phase 3 Task 3
+
+- Upgraded the native HTML/CSS/JS workbench without adding a frontend framework.
+- Added extraction settings for `mode`, `no_ocr`, `no_llm`, and `prompt_version`; `prompt_version` now flows from the UI through `/api/extract`, `ExtractionRequest`, and the pipeline call while retaining the default `v3`.
+- Home page now creates a job through `/api/extract`, stays on the workbench, polls `/api/jobs/{job_id}`, tails `/logs`, reads `/summary`, exposes job-level `/download`, links to the result page, and supports `/cancel`.
+- Added recent job history through `GET /api/jobs` with status, progress, preview/result, summary, download, and cancel actions.
+- Result page now shows progress/current title, live logs, summary, cancel, job-level download, and the existing workbook preview.
+- Red TDD check: `py -m pytest tests/test_web_app_static.py -q` failed as expected with 6 failures for missing task 3 workbench DOM, job polling/action endpoints, result job panels, version bump, and workbench CSS classes.
+- Verification: `py -m pytest tests/test_web_app_static.py tests/test_api_server.py tests/test_extraction_service.py -q` passed, output `................................. [100%]` with the existing FastAPI/Starlette deprecation warning.
