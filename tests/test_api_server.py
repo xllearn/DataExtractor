@@ -355,6 +355,143 @@ class ApiServerTests(unittest.TestCase):
             self.assertEqual(preview.status_code, 200)
             self.assertEqual(len(preview.json()["headers"]), 26)
 
+    def test_job_logs_summary_and_job_download_are_safe(self):
+        from api_server import create_app
+        from excel_writer import write_extraction_workbook
+        from field_mapping import load_field_mapping
+        from services.extraction_service import ExtractionResult
+
+        with tempfile.TemporaryDirectory() as tmp:
+            output_dir = Path(tmp) / "out"
+            log_root = Path(tmp) / "logs"
+
+            class FakeService:
+                def run(self, request):
+                    output = output_dir / "service_result.xlsx"
+                    logs = log_root / request.job_id
+                    logs.mkdir(parents=True, exist_ok=True)
+                    write_extraction_workbook(
+                        [{"info_id": "INFO-SAFE"}],
+                        output,
+                        template_path=output_dir / "missing.xlsx",
+                        field_mapping=load_field_mapping(None),
+                    )
+                    (logs / "run.log").write_text(
+                        "\n".join(
+                            [
+                                "2026-07-02 [INFO] safe line",
+                                "2026-07-02 [WARNING] warning line",
+                                "2026-07-02 [ERROR] DATABASE_URL=mysql+pymysql://user:secret@127.0.0.1/db password=abc sk-test-token https://example.test/a?X-Amz-Signature=secret-token",
+                            ]
+                        )
+                        + "\n",
+                        encoding="utf-8",
+                    )
+                    summary = logs / "summary.json"
+                    summary.write_text(
+                        json.dumps(
+                            {
+                                "run_id": "run_safe_1",
+                                "output_excel_path": str(output),
+                                "log_dir": str(logs),
+                                "note": f"absolute path {output_dir} and {log_root} and C:\\Program Files\\Vendor\\secret.txt and prefix C:\\Very Secret\\outside.xlsx suffix",
+                                "error": "password=abc sk-test-token",
+                            },
+                            ensure_ascii=False,
+                        )
+                        + "\n",
+                        encoding="utf-8",
+                    )
+                    return ExtractionResult(
+                        run_id="run_safe_1",
+                        input_mode="configured-db",
+                        selected_ids=list(request.selected_ids),
+                        keyword="",
+                        total_records=1,
+                        output_rows=1,
+                        failed_record_count=0,
+                        output_excel_path=output,
+                        summary_path=summary,
+                        log_dir=logs,
+                    )
+
+            client = TestClient(create_app(extraction_service=FakeService(), output_dir=output_dir, log_dir=log_root))
+            created = client.post("/api/extract", json={"selected_ids": ["safe-1"]}).json()
+            job = self._wait_job(client, created["job_id"])
+
+            logs = client.get(f"/api/jobs/{created['job_id']}/logs?tail=999&level=error")
+            summary = client.get(f"/api/jobs/{created['job_id']}/summary")
+            download = client.get(f"/api/jobs/{created['job_id']}/download")
+
+            self.assertEqual(logs.status_code, 200)
+            lines = logs.json()["lines"]
+            self.assertEqual(len(lines), 1)
+            self.assertIn("[ERROR]", lines[0])
+            for secret in ["DATABASE_URL", "user:secret", "password=abc", "sk-test-token", "secret-token"]:
+                self.assertNotIn(secret, str(logs.json()))
+                self.assertNotIn(secret, str(summary.json()))
+            self.assertEqual(summary.status_code, 200)
+            self.assertEqual(summary.json()["run_id"], "run_safe_1")
+            self.assertNotIn(str(output_dir), str(summary.json()))
+            self.assertNotIn(str(log_root), str(summary.json()))
+            self.assertNotIn("Program Files", str(summary.json()))
+            self.assertNotIn("Vendor", str(summary.json()))
+            self.assertNotIn("Very Secret", str(summary.json()))
+            self.assertNotIn("outside.xlsx", str(summary.json()))
+            self.assertEqual(download.status_code, 200)
+            self.assertIn("spreadsheetml", download.headers["content-type"])
+            self.assertEqual(job["download_url"], f"/api/download/{job['file_id']}")
+
+    def test_job_logs_do_not_follow_metadata_to_another_job_directory(self):
+        from api_server import create_app
+        from services.job_store import JobStore
+
+        with tempfile.TemporaryDirectory() as tmp:
+            output_dir = Path(tmp) / "out"
+            log_root = Path(tmp) / "logs"
+            store = JobStore(output_dir)
+            job = store.create(status="running", log_dir="job_20260702_010203_deadbeef")
+            other_dir = log_root / "job_20260702_010203_deadbeef"
+            other_dir.mkdir(parents=True)
+            (other_dir / "run.log").write_text("2026-07-02 [ERROR] other job secret\n", encoding="utf-8")
+
+            client = TestClient(create_app(record_provider=lambda **_: {"items": [], "total": 0}, output_dir=output_dir, log_dir=log_root))
+            response = client.get(f"/api/jobs/{job['job_id']}/logs")
+
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.json()["lines"], [])
+            self.assertNotIn("other job secret", str(response.json()))
+
+    def test_cancel_running_job_remains_cancelled(self):
+        from api_server import create_app
+        from excel_writer import write_extraction_workbook
+        from field_mapping import load_field_mapping
+
+        with tempfile.TemporaryDirectory() as tmp:
+            output_dir = Path(tmp)
+
+            def slow_runner(*_args, **_kwargs):
+                time.sleep(0.2)
+                output = output_dir / "cancel-result.xlsx"
+                write_extraction_workbook(
+                    [{"info_id": "INFO-CANCEL"}],
+                    output,
+                    template_path=output_dir / "missing.xlsx",
+                    field_mapping=load_field_mapping(None),
+                )
+                return output
+
+            client = TestClient(create_app(extract_runner=slow_runner, output_dir=output_dir, log_dir=output_dir / "logs"))
+            created = client.post("/api/extract", json={"selected_ids": ["cancel-1"]}).json()
+            cancelled = client.post(f"/api/jobs/{created['job_id']}/cancel")
+            time.sleep(0.35)
+            final = client.get(f"/api/jobs/{created['job_id']}")
+
+            self.assertEqual(cancelled.status_code, 200)
+            self.assertEqual(cancelled.json()["status"], "cancelled")
+            self.assertEqual(final.json()["status"], "cancelled")
+            self.assertEqual(final.json()["selected_ids"], ["cancel-1"])
+
     def test_extract_validates_selection_and_download_rejects_traversal(self):
         with tempfile.TemporaryDirectory() as tmp:
             client = self._client(Path(tmp))

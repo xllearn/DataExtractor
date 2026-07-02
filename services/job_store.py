@@ -7,7 +7,7 @@ from threading import Lock
 from typing import Any, Dict, Iterable, List
 from urllib.parse import quote
 
-from security_utils import mask_sensitive_text
+from security_utils import mask_sensitive_text, mask_url
 from utils import ensure_dir
 
 
@@ -20,6 +20,11 @@ PUBLIC_FIELDS = [
     "message",
     "progress_current",
     "progress_total",
+    "current_title",
+    "current_source_url",
+    "success_records",
+    "failed_records",
+    "manual_review_records",
     "created_at",
     "updated_at",
     "started_at",
@@ -120,8 +125,9 @@ class JobStore:
             if field in job:
                 public[field] = job[field]
         public["selected_ids"] = [self._safe_text(item) for item in _as_list(public.get("selected_ids"))]
-        for field in ("keyword", "message", "error", "run_id", "input_mode"):
+        for field in ("keyword", "message", "error", "run_id", "input_mode", "current_title"):
             public[field] = self._safe_text(public.get(field))
+        public["current_source_url"] = self._safe_url_text(public.get("current_source_url"))
         for field in ("output_excel_path", "summary_path", "log_dir"):
             public[field] = self._safe_path(public.get(field))
 
@@ -137,6 +143,9 @@ class JobStore:
         public["preview_url"] = self._safe_url(public.get("preview_url"))
         public["progress_current"] = _safe_int(public.get("progress_current"))
         public["progress_total"] = _safe_int(public.get("progress_total"))
+        public["success_records"] = _safe_int(public.get("success_records"))
+        public["failed_records"] = _safe_int(public.get("failed_records"))
+        public["manual_review_records"] = _safe_int(public.get("manual_review_records"))
         public["ocr_available"] = bool(public.get("ocr_available"))
         public["external_ocr_used"] = bool(public.get("external_ocr_used"))
         return public
@@ -162,6 +171,11 @@ class JobStore:
             "message": "",
             "progress_current": 0,
             "progress_total": 0,
+            "current_title": "",
+            "current_source_url": "",
+            "success_records": 0,
+            "failed_records": 0,
+            "manual_review_records": 0,
             "created_at": timestamp,
             "updated_at": timestamp,
             "started_at": "",
@@ -205,6 +219,10 @@ class JobStore:
         if text.startswith("/"):
             return text
         return ""
+
+    def _safe_url_text(self, value: Any) -> str:
+        text = "" if value is None else str(value)
+        return self._safe_text(mask_url(text))
 
 
 def _as_list(value: Any) -> Iterable[Any]:

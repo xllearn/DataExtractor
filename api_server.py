@@ -1,8 +1,11 @@
+import json
 import logging
+import re
 import subprocess
 import sys
 import time
 import uuid
+import inspect
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
@@ -22,6 +25,7 @@ from db_reader import count_configured_records, fetch_configured_records
 from image_ocr import get_ocr_status
 from keyword_utils import expand_keyword_groups
 from security_utils import mask_sensitive_text
+from services.extraction_service import ExtractionCancelled
 from services.extraction_service import ExtractionRequest as ServiceExtractionRequest
 from services.extraction_service import ExtractionService
 from services.job_store import JobStore, JobStoreError
@@ -31,6 +35,12 @@ from utils import ensure_dir
 MAX_SELECTED = 50
 WEB_APP_VERSION = "20260701_image_table"
 LOGGER = logging.getLogger(__name__)
+SENSITIVE_NAME_RE = re.compile(r"\b(DATABASE_URL|DB_PASSWORD|LLM_API_KEY|Authorization|api_key|password|token|secret)\b", re.IGNORECASE)
+SENSITIVE_QUERY_RE = re.compile(
+    r"([?&](?:X-Amz-Signature|X-Amz-Credential|Signature|Expires|api_key|password|token|secret)=)[^&\s]+",
+    re.IGNORECASE,
+)
+WINDOWS_ABS_PATH_RE = re.compile(r"[A-Za-z]:\\.*?(?=\s+(?:and|or)\s+|[,;\"'\]}]|$)", re.IGNORECASE)
 
 
 class ExtractRequest(BaseModel):
@@ -141,6 +151,12 @@ def _new_job_id() -> str:
 
 def _job_not_found() -> ApiError:
     return ApiError(404, "任务不存在或已过期，请返回列表重新生成。", "JobNotFound")
+
+
+def _mask_api_text(value: object) -> str:
+    text = mask_sensitive_text(str(value or ""))
+    text = SENSITIVE_QUERY_RE.sub(r"\1***", text)
+    return SENSITIVE_NAME_RE.sub("[redacted]", text)
 
 
 def _default_record_provider(config_path: str):
@@ -255,6 +271,20 @@ def _call_runner(runner: Callable, selected: List[str], mode: str, no_ocr: bool,
         return Path(runner(selected, mode, no_ocr, no_llm))
 
 
+def _call_service(service: Any, request: ServiceExtractionRequest, progress_callback: Callable[[dict], None], cancel_checker: Callable[[], bool]):
+    try:
+        parameters = inspect.signature(service.run).parameters
+    except (TypeError, ValueError):
+        parameters = {}
+    supports_callbacks = any(parameter.kind == inspect.Parameter.VAR_KEYWORD for parameter in parameters.values()) or {
+        "progress_callback",
+        "cancel_checker",
+    } <= set(parameters)
+    if supports_callbacks:
+        return service.run(request, progress_callback=progress_callback, cancel_checker=cancel_checker)
+    return service.run(request)
+
+
 def _preview_workbook(path: Path) -> dict:
     if not path.exists():
         raise ApiError(404, "文件不存在", "FileNotFound")
@@ -272,6 +302,119 @@ def _preview_workbook(path: Path) -> dict:
         return {"sheet": "结果数据", "headers": headers, "rows": rows, "row_count": len(rows)}
     finally:
         workbook.close()
+
+
+def _is_relative_to(path: Path, root: Path) -> bool:
+    try:
+        path.relative_to(root)
+        return True
+    except ValueError:
+        return False
+
+
+def _unique_paths(paths: list[Path]) -> list[Path]:
+    seen = set()
+    unique: list[Path] = []
+    for path in paths:
+        resolved = path.resolve()
+        key = str(resolved).lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(resolved)
+    return unique
+
+
+def _job_bound_dirs(job: dict, output_root: Path, log_root: Path) -> list[Path]:
+    job_id = str(job.get("job_id") or "")
+    roots = [output_root.resolve(), log_root.resolve()]
+    candidates = [
+        log_root.resolve() / job_id,
+        output_root.resolve() / "logs" / job_id,
+        output_root.resolve() / job_id,
+    ]
+    log_dir_text = str(job.get("log_dir") or "").strip()
+    if log_dir_text:
+        log_dir = Path(log_dir_text)
+        if not log_dir.is_absolute() and ".." not in log_dir.parts:
+            for root in roots:
+                candidate = (root / log_dir).resolve()
+                if candidate.name == job_id and _is_relative_to(candidate, root):
+                    candidates.append(candidate)
+    return _unique_paths([candidate for candidate in candidates if candidate.name == job_id])
+
+
+def _job_log_dir(job: dict, output_root: Path, log_root: Path) -> Path:
+    candidates = _job_bound_dirs(job, output_root, log_root)
+    for candidate in candidates:
+        if (candidate / "run.log").exists():
+            return candidate
+    return candidates[0] if candidates else (log_root.resolve() / str(job.get("job_id") or "")).resolve()
+
+
+def _summary_candidates(job: dict, output_root: Path, log_root: Path) -> list[Path]:
+    job_dirs = _job_bound_dirs(job, output_root, log_root)
+    candidates = [job_dir / "summary.json" for job_dir in job_dirs]
+    summary_text = str(job.get("summary_path") or "").strip()
+    if summary_text:
+        summary_path = Path(summary_text)
+        if not summary_path.is_absolute() and ".." not in summary_path.parts and summary_path.name == "summary.json":
+            if len(summary_path.parts) == 1:
+                candidates.extend(job_dir / "summary.json" for job_dir in job_dirs)
+            else:
+                allowed_parents = {str(job_dir.resolve()).lower() for job_dir in job_dirs}
+                for root in (output_root.resolve(), log_root.resolve()):
+                    candidate = (root / summary_path).resolve()
+                    if str(candidate.parent).lower() in allowed_parents:
+                        candidates.append(candidate)
+    return _unique_paths(candidates)
+
+
+def _job_summary_path(job: dict, output_root: Path, log_root: Path) -> Path:
+    candidates = _summary_candidates(job, output_root, log_root)
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return candidates[0] if candidates else (log_root.resolve() / str(job.get("job_id") or "") / "summary.json")
+
+
+def _safe_display_path(value: object, output_root: Path, log_root: Path) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    path = Path(text)
+    if path.is_absolute():
+        resolved = path.resolve()
+        for root in (output_root.resolve(), log_root.resolve()):
+            if _is_relative_to(resolved, root):
+                return _mask_api_text(resolved.relative_to(root).as_posix())
+        return _mask_api_text(path.name)
+    if ".." in path.parts:
+        return _mask_api_text(path.name)
+    return _mask_api_text(path.as_posix())
+
+
+def _safe_summary_payload(payload: object, output_root: Path, log_root: Path, key: str = "") -> object:
+    if key == "output_excel_paths" and isinstance(payload, list):
+        return [_safe_display_path(item, output_root, log_root) for item in payload]
+    if isinstance(payload, dict):
+        return {str(item_key): _safe_summary_payload(item_value, output_root, log_root, str(item_key)) for item_key, item_value in payload.items()}
+    if isinstance(payload, list):
+        return [_safe_summary_payload(item, output_root, log_root, key) for item in payload]
+    if key in {"output_excel_path", "log_dir", "summary_path"} or key.endswith("_path"):
+        return _safe_display_path(payload, output_root, log_root)
+    if isinstance(payload, str):
+        return _mask_summary_text(payload, output_root, log_root)
+    return payload
+
+
+def _mask_summary_text(value: str, output_root: Path, log_root: Path) -> str:
+    text = WINDOWS_ABS_PATH_RE.sub("[path]", str(value or ""))
+    for root in (output_root.resolve(), log_root.resolve(), PROJECT_ROOT.resolve()):
+        for fragment in {str(root), root.as_posix()}:
+            if fragment:
+                text = text.replace(fragment, "[path]")
+    return _mask_api_text(text)
 
 
 def create_app(
@@ -312,6 +455,7 @@ def create_app(
     job_store = JobStore(output_root)
     executor = ThreadPoolExecutor(max_workers=2)
     jobs: dict[str, dict] = {}
+    cancelled_jobs: set[str] = set()
     jobs_lock = Lock()
 
     app = FastAPI(title="DataExtractor API")
@@ -415,6 +559,16 @@ def create_app(
 
         def run_job() -> None:
             with jobs_lock:
+                if job_id in cancelled_jobs:
+                    jobs[job_id] = job_store.update(
+                        job_id,
+                        status="cancelled",
+                        message="cancelled",
+                        selected_ids=selected,
+                        finished_at=_now_iso(),
+                        updated_at=_now_iso(),
+                    )
+                    return
                 started_at = _now_iso()
                 jobs[job_id] = job_store.update(
                     job_id,
@@ -428,19 +582,38 @@ def create_app(
                 if runner is not None:
                     output_path = _call_runner(runner, selected, request.mode, request.no_ocr, request.no_llm, request.external_ocr_text)
                 else:
-                    service_result = service.run(
-                        ServiceExtractionRequest(
-                            selected_ids=selected,
-                            mode=request.mode,
-                            no_ocr=request.no_ocr,
-                            no_llm=request.no_llm,
-                            external_ocr_text=request.external_ocr_text,
-                            job_id=job_id,
-                        )
+                    service_request = ServiceExtractionRequest(
+                        selected_ids=selected,
+                        mode=request.mode,
+                        no_ocr=request.no_ocr,
+                        no_llm=request.no_llm,
+                        external_ocr_text=request.external_ocr_text,
+                        job_id=job_id,
                     )
+
+                    def progress_callback(payload: dict) -> None:
+                        with jobs_lock:
+                            if job_id in cancelled_jobs:
+                                return
+                            jobs[job_id] = job_store.update(job_id, status="running", message="running", **payload)
+
+                    def cancel_checker() -> bool:
+                        return job_id in cancelled_jobs
+
+                    service_result = _call_service(service, service_request, progress_callback, cancel_checker)
                     output_path = service_result.output_excel_path
                 file_id = output_path.name
                 with jobs_lock:
+                    if job_id in cancelled_jobs:
+                        jobs[job_id] = job_store.update(
+                            job_id,
+                            status="cancelled",
+                            message="cancelled",
+                            selected_ids=selected,
+                            finished_at=_now_iso(),
+                            updated_at=_now_iso(),
+                        )
+                        return
                     update_fields = {
                         "run_id": "",
                         "input_mode": "configured-db",
@@ -475,8 +648,29 @@ def create_app(
                         updated_at=_now_iso(),
                         **update_fields,
                     )
+            except ExtractionCancelled:
+                with jobs_lock:
+                    cancelled_jobs.add(job_id)
+                    jobs[job_id] = job_store.update(
+                        job_id,
+                        status="cancelled",
+                        message="cancelled",
+                        selected_ids=selected,
+                        finished_at=_now_iso(),
+                        updated_at=_now_iso(),
+                    )
             except Exception as exc:
                 with jobs_lock:
+                    if job_id in cancelled_jobs:
+                        jobs[job_id] = job_store.update(
+                            job_id,
+                            status="cancelled",
+                            message="cancelled",
+                            selected_ids=selected,
+                            finished_at=_now_iso(),
+                            updated_at=_now_iso(),
+                        )
+                        return
                     jobs[job_id] = job_store.update(
                         job_id,
                         status="failed",
@@ -500,8 +694,7 @@ def create_app(
         items = job_store.list(limit=limit)
         return {"items": items, "total": len(items), "limit": limit}
 
-    @app.get("/api/jobs/{job_id}")
-    def job_status(job_id: str):
+    def read_job_or_404(job_id: str) -> dict:
         with jobs_lock:
             job = dict(jobs.get(job_id) or {})
         if not job:
@@ -511,19 +704,79 @@ def create_app(
                 raise _job_not_found()
         if not job:
             raise _job_not_found()
+        return job
+
+    @app.get("/api/jobs/{job_id}")
+    def job_status(job_id: str):
+        job = read_job_or_404(job_id)
         return job_store.public_payload(job)
+
+    @app.get("/api/jobs/{job_id}/logs")
+    def job_logs(job_id: str, tail: int = 200, level: str = ""):
+        job = read_job_or_404(job_id)
+        normalized_level = str(level or "").strip().lower()
+        if normalized_level and normalized_level not in {"info", "warning", "error"}:
+            raise ApiError(400, "level 只能是 info、warning 或 error", "ValidationError")
+        tail = max(0, min(int(tail or 0), 500))
+        log_path = _job_log_dir(job, output_root, log_root) / "run.log"
+        lines: list[str] = []
+        if log_path.exists():
+            raw_lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
+            if normalized_level:
+                marker = f"[{normalized_level.upper()}]"
+                raw_lines = [line for line in raw_lines if marker in line.upper()]
+            lines = [_mask_api_text(line) for line in raw_lines[-tail:]] if tail else []
+        return {"job_id": job_id, "level": normalized_level, "tail": tail, "lines": lines}
+
+    @app.get("/api/jobs/{job_id}/summary")
+    def job_summary(job_id: str):
+        job = read_job_or_404(job_id)
+        summary_path = _job_summary_path(job, output_root, log_root)
+        if not summary_path.exists():
+            raise ApiError(404, "summary 尚未生成", "SummaryNotReady")
+        try:
+            payload = json.loads(summary_path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            raise ApiError(500, f"summary 读取失败: {exc}", "SummaryReadError") from exc
+        return _safe_summary_payload(payload, output_root, log_root)
+
+    @app.get("/api/jobs/{job_id}/download")
+    def job_download(job_id: str):
+        job = read_job_or_404(job_id)
+        if job.get("status") != "success":
+            raise ApiError(400, "job 尚未成功，不能下载", "JobNotReady")
+        file_id = str(job.get("file_id") or "")
+        if not file_id and job.get("output_excel_path"):
+            file_id = Path(str(job.get("output_excel_path"))).name
+        path = _safe_download_path(output_root, file_id)
+        return FileResponse(
+            path,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            filename=path.name,
+        )
+
+    @app.post("/api/jobs/{job_id}/cancel")
+    def job_cancel(job_id: str):
+        job = read_job_or_404(job_id)
+        status = str(job.get("status") or "")
+        if status == "cancelled":
+            return job_store.public_payload(job)
+        if status in {"success", "failed"}:
+            raise ApiError(400, "job 已结束，不能取消", "JobAlreadyFinished")
+        with jobs_lock:
+            cancelled_jobs.add(job_id)
+            jobs[job_id] = job_store.update(
+                job_id,
+                status="cancelled",
+                message="cancelled",
+                finished_at=_now_iso(),
+                updated_at=_now_iso(),
+            )
+            return jobs[job_id]
 
     @app.get("/api/jobs/{job_id}/preview")
     def job_preview(job_id: str):
-        with jobs_lock:
-            job = dict(jobs.get(job_id) or {})
-        if not job:
-            try:
-                job = job_store.read(job_id)
-            except JobStoreError:
-                raise _job_not_found()
-        if not job:
-            raise _job_not_found()
+        job = read_job_or_404(job_id)
         if job.get("status") != "success":
             raise ApiError(400, "job 尚未完成，不能预览", "JobNotReady")
         file_id = str(job.get("file_id") or "")

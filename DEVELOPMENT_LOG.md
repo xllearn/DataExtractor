@@ -678,3 +678,11 @@ Continue optimization on `codex/db-to-excel-extractor`: start the project first,
 - Added `GET /api/jobs` basic recent-job listing backed by `JobStore`; `GET /api/jobs/{job_id}` and preview recover public metadata through `JobStore`.
 - Red TDD check: `py -m pytest tests/test_job_store.py tests/test_extraction_service.py tests/test_api_server.py -q` failed as expected with 6 failures caused by missing `services` imports.
 - Verification: `py -m pytest tests/test_job_store.py tests/test_extraction_service.py tests/test_api_server.py -q` passed, output `.................. [100%]` with the existing FastAPI/Starlette deprecation warning.
+
+## 2026-07-02 Phase 3 Task 2
+
+- Added persisted job progress fields for current title/source URL, success/failed/manual-review counts, and per-record progress callbacks in `ExtractionService`.
+- Added service cancellation checks between records and a cancelled summary/log path; API cancellation keeps queued/running jobs in `cancelled` even if a fallback runner returns later.
+- Added job-level APIs for logs, summary, download, and cancel with tail limits, level filtering, path-bound reads, and sensitive text/query masking.
+- Red TDD check: `py -m pytest tests/test_job_store.py tests/test_extraction_service.py tests/test_api_server.py -q` failed as expected on missing progress fields, progress/cancel service hooks, and missing job logs/download/cancel endpoints.
+- Verification: `py -m pytest tests/test_job_store.py tests/test_extraction_service.py tests/test_api_server.py -q` passed, output `....................... [100%]` with the existing FastAPI/Starlette deprecation warning.

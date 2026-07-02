@@ -1,3 +1,4 @@
+import json
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -20,6 +21,10 @@ from vision_client import create_vision_client
 
 from config_loader import load_db_config, validate_db_config_ready
 from .run_context import RunContext
+
+
+class ExtractionCancelled(RuntimeError):
+    pass
 
 
 @dataclass
@@ -73,6 +78,8 @@ class ExtractionService:
         settings: Any = None,
         table_mapping: Any = None,
         context: RunContext | None = None,
+        progress_callback: Callable[[Dict[str, Any]], None] | None = None,
+        cancel_checker: Callable[[], bool] | None = None,
     ):
         self.context = context or RunContext.from_roots(output_dir, log_dir)
         self.record_provider = record_provider or self._configured_record_provider(config_path)
@@ -88,8 +95,15 @@ class ExtractionService:
         self.settings = settings
         self.field_mapping = field_mapping
         self.table_mapping = table_mapping
+        self.progress_callback = progress_callback
+        self.cancel_checker = cancel_checker
 
-    def run(self, request: ExtractionRequest) -> ExtractionResult:
+    def run(
+        self,
+        request: ExtractionRequest,
+        progress_callback: Callable[[Dict[str, Any]], None] | None = None,
+        cancel_checker: Callable[[], bool] | None = None,
+    ) -> ExtractionResult:
         if request.mode not in {"single", "merge"}:
             raise ValueError("mode must be single or merge")
         selected_ids = [str(item).strip() for item in request.selected_ids if str(item).strip()]
@@ -103,6 +117,33 @@ class ExtractionService:
 
         input_mode, records = self._read_records(request, selected_ids)
         summary.update_input(input_mode, len(records))
+        on_progress = progress_callback or self.progress_callback
+        is_cancelled = cancel_checker or self.cancel_checker
+
+        def cancelled() -> bool:
+            return bool(is_cancelled and is_cancelled())
+
+        def write_cancelled() -> None:
+            logger.warning("extraction cancelled")
+            payload = summary.write_artifacts()
+            payload["status"] = "cancelled"
+            (run_log_dir / "summary.json").write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            _close_logger(logger)
+
+        def emit_progress(record: Dict[str, Any], current: int) -> None:
+            if not on_progress:
+                return
+            on_progress(
+                {
+                    "progress_current": current,
+                    "progress_total": len(records),
+                    "current_title": record.get("Title") or record.get("title") or "",
+                    "current_source_url": record.get("SourceURL") or record.get("source_url") or "",
+                    "success_records": summary.success_records,
+                    "failed_records": summary.failed_record_count,
+                    "manual_review_records": summary.manual_review_records,
+                }
+            )
 
         no_llm = bool(request.no_llm)
         no_ocr = bool(request.no_ocr or no_llm)
@@ -118,6 +159,9 @@ class ExtractionService:
         today = today_yyyymmdd()
 
         for index, record in enumerate(records, start=1):
+            if cancelled():
+                write_cancelled()
+                raise ExtractionCancelled("extraction cancelled")
             record_metadata = create_empty_metadata()
             try:
                 rows = self.pipeline(
@@ -153,6 +197,7 @@ class ExtractionService:
                     all_rows.extend(rows)
                     _extend_metadata(all_metadata, record_metadata)
                 summary.record_success(output_rows=len(rows), **_metadata_flags(record_metadata))
+                emit_progress(record, index)
             except Exception as exc:
                 record_error_count += 1
                 safe_error = mask_sensitive_text(str(exc))
@@ -181,6 +226,7 @@ class ExtractionService:
                     }
                 )
                 logger.error("record processing failed: %s", safe_error)
+                emit_progress(record, index)
                 continue
 
         if request.mode == "merge":

@@ -13,6 +13,11 @@ REQUIRED_PUBLIC_FIELDS = {
     "message",
     "progress_current",
     "progress_total",
+    "current_title",
+    "current_source_url",
+    "success_records",
+    "failed_records",
+    "manual_review_records",
     "created_at",
     "updated_at",
     "started_at",
@@ -53,6 +58,11 @@ def test_job_store_create_update_read_list_and_restart_recovery():
             message="done",
             progress_current=2,
             progress_total=2,
+            current_title="Policy DATABASE_URL=mysql+pymysql://user:secret@127.0.0.1/db",
+            current_source_url="https://example.test/a?X-Amz-Signature=secret-token",
+            success_records=1,
+            failed_records=1,
+            manual_review_records=1,
             started_at="2026-07-02T01:00:00+00:00",
             finished_at="2026-07-02T01:00:01+00:00",
             output_excel_path=output_file,
@@ -66,6 +76,11 @@ def test_job_store_create_update_read_list_and_restart_recovery():
         assert recovered["status"] == "success"
         assert recovered["run_id"] == "run_20260702_101112_abcdef12"
         assert recovered["selected_ids"] == ["A1", "A2"]
+        assert recovered["current_title"] == "Policy [redacted]=mysql+pymysql://user:***@127.0.0.1/db"
+        assert "secret-token" not in recovered["current_source_url"]
+        assert recovered["success_records"] == 1
+        assert recovered["failed_records"] == 1
+        assert recovered["manual_review_records"] == 1
         assert recovered["output_excel_path"] == "result.xlsx"
         assert recovered["summary_path"].endswith("summary.json")
         assert not Path(recovered["summary_path"]).is_absolute()
