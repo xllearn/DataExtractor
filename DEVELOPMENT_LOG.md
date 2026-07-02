@@ -761,3 +761,13 @@ Continue optimization on `codex/db-to-excel-extractor`: start the project first,
 - Green verification: `py -m pytest tests/test_docker_config.py -q` passed, output `........ [100%]`.
 - Regression verification: `py -m pytest tests/test_docker_config.py tests/test_app_config_loader.py tests/test_api_auth.py -q` passed, output `.................. [100%]` with the existing FastAPI/Starlette deprecation warning.
 - Diff verification command: `git diff --check`.
+
+## 2026-07-02 Phase 3 Task 10
+
+- Added focused productization coverage files `tests/test_api_jobs.py`, `tests/test_api_uploads.py`, and `tests/test_web_static.py` so job APIs, upload APIs, and static web API wiring are covered outside the broad `tests/test_api_server.py` suite.
+- Job API tests cover restart-style metadata recovery, recent job listing, logs with sensitive text masking, summary, preview, download, cancellation, and JSON errors for not-ready downloads.
+- Upload API tests cover safe generated filenames, list/delete lifecycle, non-xlsx rejection, configured upload-size rejection, and invalid workbook rejection without using real network, DB, LLM, or OCR.
+- Web static tests cover productized API route wiring and safe DOM rendering without `innerHTML`.
+- Red TDD check: `py -m pytest tests/test_api_jobs.py tests/test_api_uploads.py tests/test_web_static.py -q` failed once because the upload lifecycle test incorrectly expected the original filename instead of the generated safe upload filename.
+- Verification: `py -m pytest tests/test_api_jobs.py tests/test_api_uploads.py tests/test_web_static.py -q` passed, output `...... [100%]` with the existing FastAPI/Starlette deprecation warning.
+- Regression verification: `py -m pytest tests/test_api_server.py tests/test_job_store.py tests/test_extraction_service.py tests/test_web_app_static.py tests/test_api_jobs.py tests/test_api_uploads.py tests/test_web_static.py -q` passed, output `................................................ [100%]` with the existing FastAPI/Starlette deprecation warning.
