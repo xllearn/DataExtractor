@@ -270,6 +270,23 @@ python main.py --strict-config --config config/db_config.yml --limit 20
 
 ## 规则抽取
 
+## Phase 2 quality and explainability
+
+This branch now adds a second explainability layer on top of the fixed 26-column result sheet:
+
+- HTML tables are normalized before extraction. `rowspan`/`colspan`, multi-level headers, captions, inherited blank cells, Markdown escaping, and original cell coordinates are preserved.
+- Field evidence can include `table_index`, `row_index`, `col_index`, `header`, `header_path`, `cell_text`, `caption`, and `evidence_id`.
+- Row fusion aligns table/text-rule/LLM rows by key-field similarity instead of raw row order, and writes row-match evidence.
+- Workbooks can include `字段置信度`, `人工复核`, and `行匹配证据` sheets when the pipeline provides those metadata rows.
+- Prompt versioning is available with `--prompt-version v3` by default; `--prompt-version v2` keeps the previous v2 prompt text. Collection logs include prompt and response hashes.
+- `quality_eval.py` compares a generated workbook with a manually reviewed workbook and writes both xlsx and json reports:
+
+```bash
+python quality_eval.py outputs/generated.xlsx samples/manual/reviewed.xlsx --output-xlsx reports/quality_eval.xlsx --output-json reports/quality_eval.json
+```
+
+Default thresholds live in `config/quality_thresholds.yml`.
+
 程序会在 LLM 前先执行轻量规则抽取，规则结果会写入证据日志、传给 LLM v2 作为参考，并进入最终融合流程。
 
 表格规则配置在：

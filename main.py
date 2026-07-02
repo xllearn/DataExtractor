@@ -14,8 +14,8 @@ from input_xlsx import read_records_from_xlsx
 from keyword_utils import expand_keyword_groups
 from llm_client import LLMClient
 from pipeline import (
-    _empty_metadata,
     choose_final_attempt,
+    create_empty_metadata,
     extract_once,
     extract_once_detail,
     extract_record_rows,
@@ -37,14 +37,15 @@ from runtime import (
 )
 from security_utils import mask_sensitive_text
 from table_extractor import load_table_mapping
-from utils import append_jsonl, today_yyyymmdd
+from utils import today_yyyymmdd
 from vision_client import create_vision_client
 
 
 def _append_failure(logs_dir: Path, summary: RunSummary, payload: Dict[str, Any]) -> Dict[str, Any]:
-    safe = summary.record_failure(payload)
-    append_jsonl(logs_dir / "failed_records.jsonl", safe)
-    return safe
+    return summary.record_failure(payload)
+
+
+_empty_metadata = create_empty_metadata
 
 
 def _metadata_flags(record_metadata: Dict[str, List[Dict[str, Any]]]) -> Dict[str, bool]:
@@ -194,7 +195,7 @@ def main() -> int:
     llm_client = None if runtime_flags["no_llm"] else LLMClient(settings)
     ocr_enabled = settings.ocr_enabled and not runtime_flags["no_ocr"] and bool(ocr_status.get("available"))
     all_rows: List[Dict[str, Any]] = []
-    all_metadata = _empty_metadata()
+    all_metadata = create_empty_metadata()
     output_paths: List[Path] = []
     record_error_count = 0
 
@@ -204,7 +205,7 @@ def main() -> int:
             logger.info("Title: %s", record.get("Title"))
             logger.info("SourceURL: %s", record.get("SourceURL"))
 
-            record_metadata = _empty_metadata()
+            record_metadata = create_empty_metadata()
             rows = extract_record_rows(
                 record=record,
                 record_index=args.offset + index,
@@ -221,6 +222,7 @@ def main() -> int:
                 table_mapping=table_mapping,
                 no_llm=runtime_flags["no_llm"],
                 input_mode=input_mode,
+                prompt_version=args.prompt_version,
                 save_intermediate=args.save_intermediate,
                 metadata=record_metadata,
                 external_ocr_text=external_ocr_for_record(record, external_ocr_text, external_ocr_mapping),
@@ -229,6 +231,9 @@ def main() -> int:
                 vision_client=vision_client,
                 run_id=summary.run_id,
             )
+
+            for failed_payload in record_metadata.get("failed_records", []):
+                summary.record_failure(failed_payload, count_record_failure=False)
 
             if args.mode == "single" and not runtime_flags["no_excel"]:
                 output_path = build_single_output_path(record, output_dir, args.offset + index)
@@ -243,6 +248,9 @@ def main() -> int:
                         conflict_evidence=record_metadata["conflict_evidence"],
                         extract_evaluations=record_metadata["extract_evaluations"],
                         failed_records=record_metadata["failed_records"],
+                        field_confidence=record_metadata["field_confidence"],
+                        review_rows=record_metadata["review_rows"],
+                        row_match_evidence=record_metadata["row_match_evidence"],
                     )
                 except Exception as exc:
                     masked_error = mask_sensitive_text(str(exc))
@@ -317,6 +325,9 @@ def main() -> int:
                 conflict_evidence=all_metadata["conflict_evidence"],
                 extract_evaluations=all_metadata["extract_evaluations"],
                 failed_records=all_metadata["failed_records"],
+                field_confidence=all_metadata["field_confidence"],
+                review_rows=all_metadata["review_rows"],
+                row_match_evidence=all_metadata["row_match_evidence"],
             )
         except Exception as exc:
             masked_error = mask_sensitive_text(str(exc))

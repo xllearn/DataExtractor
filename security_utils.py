@@ -38,6 +38,17 @@ def mask_sensitive_text(value: str) -> str:
     return text
 
 
+def mask_url(url: str) -> str:
+    text = "" if url is None else str(url)
+    try:
+        parts = urlsplit(text)
+        if not parts.query and not parts.fragment:
+            return mask_sensitive_text(text)
+        return mask_sensitive_text(urlunsplit((parts.scheme, parts.netloc, parts.path, "***", "")))
+    except Exception:
+        return mask_sensitive_text(re.sub(r"([?&])[^=\s]+=[^&\s]+", r"\1***=***", text))
+
+
 def sanitize_excel_value(value, max_length: int = 32767):
     if value is None:
         return ""

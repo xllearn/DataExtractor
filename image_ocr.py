@@ -3,15 +3,16 @@ import inspect
 import ipaddress
 import logging
 import os
+import socket
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 import requests
 from PIL import Image
 
-from security_utils import mask_sensitive_text
+from security_utils import mask_sensitive_text, mask_url
 from utils import ensure_dir
 
 
@@ -80,7 +81,7 @@ def process_image_ocr(
             "source": "paddleocr",
             "record_index": record_index,
             "image_index": image_index,
-            "image_url": url,
+            "image_url": mask_url(url),
             "download_success": False,
             "download_status": "",
             "image_format": "",
@@ -102,13 +103,13 @@ def process_image_ocr(
             success_count += 1
         except Exception as exc:
             failure_count += 1
-            diagnostic["error"] = mask_sensitive_text(str(exc))
+            diagnostic["error"] = mask_url(mask_sensitive_text(str(exc)))
             if not diagnostic["download_success"]:
                 diagnostic["download_status"] = diagnostic["error"] or "download_failed"
             errors.append(diagnostic)
             texts.append(f"{marker}\n--")
             if logger:
-                logger.exception("图片 OCR 失败: record=%s image=%s url=%s error=%s", record_index, image_index, url, exc)
+                logger.exception("图片 OCR 失败: record=%s image=%s url=%s error=%s", record_index, image_index, mask_url(url), mask_sensitive_text(str(exc)))
 
     return OcrSummary(text="\n\n".join(texts), success_count=success_count, failure_count=failure_count, errors=errors)
 
@@ -127,7 +128,30 @@ def _env_int(name: str, default: int) -> int:
         return default
 
 
-def _validate_download_url(url: str) -> None:
+def _blocked_ip_reason(ip_text: str) -> str:
+    ip = ipaddress.ip_address(ip_text)
+    if (
+        ip.is_loopback
+        or ip.is_private
+        or ip.is_link_local
+        or ip.is_multicast
+        or ip.is_unspecified
+        or ip.is_reserved
+    ):
+        return "blocked"
+    return ""
+
+
+def _resolve_host_ips(host: str) -> List[str]:
+    ips: List[str] = []
+    for item in socket.getaddrinfo(host, None, type=socket.SOCK_STREAM):
+        ip_text = item[4][0]
+        if ip_text not in ips:
+            ips.append(ip_text)
+    return ips
+
+
+def _validate_download_url(url: str, resolve_dns: bool = True) -> None:
     parsed = urlparse(url)
     if parsed.scheme not in {"http", "https"}:
         raise ValueError("图片下载只允许 http/https 协议")
@@ -139,8 +163,16 @@ def _validate_download_url(url: str) -> None:
     try:
         ip = ipaddress.ip_address(host)
     except ValueError:
+        if resolve_dns:
+            try:
+                ips = _resolve_host_ips(host)
+            except socket.gaierror as exc:
+                raise ValueError(f"图片 URL DNS 解析失败: {host}") from exc
+            for resolved_ip in ips:
+                if _blocked_ip_reason(resolved_ip):
+                    raise ValueError(f"拒绝下载 DNS 解析到内网或保留地址的图片: {host}")
         return
-    if ip.is_loopback or ip.is_private or ip.is_link_local or ip.is_unspecified or ip.is_reserved:
+    if _blocked_ip_reason(str(ip)):
         raise ValueError(f"拒绝下载内网或保留地址图片: {host}")
 
 
@@ -177,8 +209,13 @@ def download_image(
     timeout = _env_float("IMAGE_DOWNLOAD_TIMEOUT", DEFAULT_IMAGE_DOWNLOAD_TIMEOUT) if timeout is None else timeout
     max_bytes = _env_int("IMAGE_MAX_BYTES", DEFAULT_IMAGE_MAX_BYTES) if max_bytes is None else int(max_bytes)
     try:
-        response_context = requests.get(url, timeout=timeout, stream=True)
+        response_context = requests.get(url, timeout=timeout, stream=True, allow_redirects=False)
         with response_context as response:
+            if 300 <= int(getattr(response, "status_code", 0) or 0) < 400:
+                location = response.headers.get("Location", "")
+                redirect_url = urljoin(url, location)
+                _validate_download_url(redirect_url)
+                raise ValueError(f"图片下载不允许重定向: {mask_url(redirect_url)}")
             response.raise_for_status()
             _validate_content_type(response.headers.get("Content-Type", ""))
             content_length = response.headers.get("Content-Length")
@@ -207,7 +244,7 @@ def download_image(
                 pass
         if isinstance(exc, ValueError):
             raise
-        raise RuntimeError(mask_sensitive_text(str(exc))) from exc
+        raise RuntimeError(mask_url(mask_sensitive_text(str(exc)))) from exc
     _verify_downloaded_image(output_path)
     return output_path
 

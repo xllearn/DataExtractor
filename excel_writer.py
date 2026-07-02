@@ -13,7 +13,7 @@ from utils import EXCEL_HEADERS, build_single_filename, ensure_dir
 
 
 LONG_TEXT_HEADERS = {"个人账户计入办法", "个人账户使用范围", "备注", "相关资讯"}
-TARGET_SHEETS = {"结果数据", "采集日志", "字段证据", "冲突证据", "抽取评估", "失败记录"}
+TARGET_SHEETS = {"结果数据", "采集日志", "字段证据", "冲突证据", "抽取评估", "失败记录", "字段置信度", "人工复核", "行匹配证据"}
 
 
 def _new_or_template_workbook(template_path: Path) -> Workbook:
@@ -51,6 +51,9 @@ def write_extraction_workbook(
     conflict_evidence: List[Dict[str, Any]] | None = None,
     extract_evaluations: List[Dict[str, Any]] | None = None,
     failed_records: List[Dict[str, Any]] | None = None,
+    field_confidence: List[Dict[str, Any]] | None = None,
+    review_rows: List[Dict[str, Any]] | None = None,
+    row_match_evidence: List[Dict[str, Any]] | None = None,
 ) -> Path:
     output_path = Path(output_path)
     ensure_dir(output_path.parent)
@@ -65,6 +68,12 @@ def write_extraction_workbook(
     write_dict_sheet(workbook, "字段证据", field_evidence or [], FIELD_EVIDENCE_HEADERS)
     write_dict_sheet(workbook, "冲突证据", conflict_evidence or [], CONFLICT_EVIDENCE_HEADERS)
     write_dict_sheet(workbook, "抽取评估", extract_evaluations or [], EXTRACT_EVAL_HEADERS)
+    if field_confidence is not None:
+        write_dict_sheet(workbook, "字段置信度", field_confidence, FIELD_CONFIDENCE_HEADERS)
+    if review_rows is not None:
+        write_dict_sheet(workbook, "人工复核", review_rows, REVIEW_ROW_HEADERS)
+    if row_match_evidence is not None:
+        write_dict_sheet(workbook, "行匹配证据", row_match_evidence, ROW_MATCH_HEADERS)
     write_dict_sheet(workbook, "失败记录", failed_records or [], FAILED_RECORD_HEADERS)
 
     workbook.save(output_path)
@@ -136,6 +145,9 @@ COLLECTION_LOG_HEADERS = [
     "ocr_failure_reason",
     "external_ocr_used",
     "llm_format",
+    "prompt_version",
+    "prompt_hash",
+    "response_hash",
     "llm_parse_success",
     "need_manual_review",
     "review_reason",
@@ -146,7 +158,27 @@ COLLECTION_LOG_HEADERS = [
     "ocr_improved",
     "final_attempt",
 ]
-FIELD_EVIDENCE_HEADERS = ["source_id", "info_id", "record_index", "row_index", "field", "value", "evidence", "confidence", "source", "rule_name", "attempt", "chosen"]
+FIELD_EVIDENCE_HEADERS = [
+    "source_id",
+    "info_id",
+    "record_index",
+    "row_index",
+    "field",
+    "value",
+    "evidence",
+    "confidence",
+    "source",
+    "rule_name",
+    "attempt",
+    "chosen",
+    "table_index",
+    "col_index",
+    "header",
+    "header_path",
+    "cell_text",
+    "caption",
+    "evidence_id",
+]
 CONFLICT_EVIDENCE_HEADERS = [
     "source_id",
     "info_id",
@@ -181,6 +213,9 @@ EXTRACT_EVAL_HEADERS = [
     "key_field_score",
     "ocr_risk_score",
 ]
+FIELD_CONFIDENCE_HEADERS = ["row_index", "field", "value", "confidence", "source", "evidence_count", "conflict_count", "reason", "evidence", "evidence_ids"]
+REVIEW_ROW_HEADERS = ["row_index", "field", "value", "confidence", "reason", "suggested_action", "title", "source_url", "evidence"]
+ROW_MATCH_HEADERS = ["record_index", "attempt", "source_a", "source_b", "row_a", "row_b", "similarity", "matched_fields", "reason", "candidate_index"]
 FAILED_RECORD_HEADERS = ["phase", "record_index", "source_id", "info_id", "Title", "SourceURL", "error"]
 
 

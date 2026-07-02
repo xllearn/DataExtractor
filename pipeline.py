@@ -5,6 +5,7 @@ from typing import Any, Dict, List
 
 from confidence import IMAGE_TABLE_RISK_MESSAGE, evaluate_rows, mark_ocr_failed
 from extraction_types import RuleExtractionResult
+from field_confidence import build_review_rows, calculate_field_confidence
 from field_mapping import FieldMapping, load_field_mapping
 from html_parser import parse_html_content
 from image_ocr import get_ocr_status, process_image_ocr
@@ -13,7 +14,7 @@ from json_utils import normalize_llm_rows
 from llm_client import LLMClient
 from llm_extractor import LlmExtractionResult, extract_with_llm, llm_result_to_field_evidence
 from prompts import build_extract_prompt
-from prompts_v2 import build_extract_prompt_v2
+from prompt_registry import build_prompt, hash_text
 from record_fusion import fuse_record_sources
 from rule_extractor import extract_key_value_records
 from security_utils import mask_sensitive_text
@@ -44,14 +45,32 @@ def _append_jsonl_many(path: Path, items: List[Dict[str, Any]]) -> None:
         append_jsonl(path, item)
 
 
-def _empty_metadata() -> Dict[str, List[Dict[str, Any]]]:
+def _append_confidence_metadata(
+    metadata: Dict[str, List[Dict[str, Any]]],
+    rows: List[Dict[str, Any]],
+    field_evidence: List[Dict[str, Any]],
+    conflicts: List[Dict[str, Any]],
+) -> None:
+    confidence_rows = calculate_field_confidence(rows, field_evidence, conflicts, metadata.get("collection_logs", []))
+    review_rows = build_review_rows(rows, confidence_rows, conflicts, metadata.get("collection_logs", []))
+    metadata["field_confidence"].extend(confidence_rows)
+    metadata["review_rows"].extend(review_rows)
+
+
+def create_empty_metadata() -> Dict[str, List[Dict[str, Any]]]:
     return {
         "collection_logs": [],
         "field_evidence": [],
         "conflict_evidence": [],
         "extract_evaluations": [],
         "failed_records": [],
+        "field_confidence": [],
+        "review_rows": [],
+        "row_match_evidence": [],
     }
+
+
+_empty_metadata = create_empty_metadata
 
 
 def _merge_rule_results(results: List[RuleExtractionResult]) -> RuleExtractionResult:
@@ -166,6 +185,7 @@ def extract_record_rows(
     table_mapping=None,
     no_llm: bool = False,
     input_mode: str = "",
+    prompt_version: str = "v3",
     save_intermediate: bool = False,
     metadata: Dict[str, List[Dict[str, Any]]] | None = None,
     ocr_func=process_image_ocr,
@@ -175,7 +195,9 @@ def extract_record_rows(
     vision_client=None,
     run_id: str = "",
 ) -> List[Dict[str, Any]]:
-    metadata = metadata if metadata is not None else _empty_metadata()
+    metadata = metadata if metadata is not None else create_empty_metadata()
+    for key, value in create_empty_metadata().items():
+        metadata.setdefault(key, list(value))
     field_mapping = field_mapping or load_field_mapping(None)
     logger = logger or logging.getLogger("db_to_excel_extractor")
     parsed = parse_html_content(record.get("Content"), image_base_url, logger)
@@ -225,7 +247,7 @@ def extract_record_rows(
                 "rule_name": "external_ocr_text",
             }
         )
-    html_table_result = extract_table_records(record.get("Content") or "", parsed.tables_text, source_id=source_id, info_id=info_id, config=table_mapping, field_mapping=field_mapping)
+    html_table_result = extract_table_records(record.get("Content") or "", parsed.tables_text, source_id=source_id, info_id=info_id, config=table_mapping, field_mapping=field_mapping, normalized_tables=parsed.normalized_tables)
     image_table_result = RuleExtractionResult(records=image_context.records, field_evidence=image_context.field_evidence, errors=[])
     table_result = _merge_rule_results([html_table_result, image_table_result])
     rule_text = "\n".join(part for part in [parsed.clean_text, image_ocr_text] if part)
@@ -237,7 +259,7 @@ def extract_record_rows(
 
     initial_llm_result = extract_once_detail(
         record, record_index, llm_client, logs_dir, today, parsed.clean_text, parsed.tables_text, image_ocr_text, len(parsed.image_urls),
-        "initial", debug, logger, field_mapping, llm_format, table_result.records, text_rule_result.records, field_evidence, no_llm=no_llm, run_id=run_id
+        "initial", debug, logger, field_mapping, llm_format, table_result.records, text_rule_result.records, field_evidence, no_llm=no_llm, run_id=run_id, failure_collector=metadata["failed_records"], prompt_version=prompt_version
     )
     initial_llm_evidence = llm_result_to_field_evidence(initial_llm_result, source_id, info_id, attempt="initial") if not no_llm else []
     initial_fusion = fuse_record_sources(
@@ -253,9 +275,11 @@ def extract_record_rows(
     initial_rows = initial_fusion.records
     initial_field_evidence = _with_context([*initial_fusion.field_evidence, *external_ocr_evidence], record_index, "initial")
     initial_conflicts = _with_context(initial_fusion.conflict_evidence, record_index, "initial")
+    initial_row_match_evidence = _with_context(initial_fusion.row_match_evidence, record_index, "initial")
     _append_jsonl_many(logs_dir / "field_evidence.jsonl", initial_field_evidence)
     _append_jsonl_many(logs_dir / "rule_extract_errors.jsonl", _with_context([*table_result.errors, *text_rule_result.errors], record_index, "initial"))
     _append_jsonl_many(logs_dir / "conflict_evidence.jsonl", initial_conflicts)
+    _append_jsonl_many(logs_dir / "row_match_evidence.jsonl", initial_row_match_evidence)
     initial_evals = evaluate_rows(
         initial_rows,
         record,
@@ -291,6 +315,7 @@ def extract_record_rows(
             review_reason_parts.append(f"OCR 识别失败：{image_context.ocr_failure_reason}")
         metadata["field_evidence"].extend(initial_field_evidence)
         metadata["conflict_evidence"].extend(initial_conflicts)
+        metadata["row_match_evidence"].extend(initial_row_match_evidence)
         metadata["extract_evaluations"].extend(initial_eval_payloads)
         metadata["collection_logs"].append(
             {
@@ -308,6 +333,9 @@ def extract_record_rows(
                 "ocr_skipped_reason": skipped_reason,
                 "image_count": len(parsed.image_urls),
                 "llm_format": "none" if no_llm else llm_format,
+                "prompt_version": initial_llm_result.prompt_version,
+                "prompt_hash": initial_llm_result.prompt_hash,
+                "response_hash": initial_llm_result.response_hash,
                 "llm_parse_success": not bool(initial_llm_result.parse_error),
                 "need_manual_review": bool(initial_fusion.need_manual_review or (ocr_wanted and not ocr_enabled)),
                 "review_reason": "；".join(part for part in review_reason_parts if part),
@@ -319,6 +347,7 @@ def extract_record_rows(
                 "final_attempt": "initial",
             }
         )
+        _append_confidence_metadata(metadata, initial_rows, initial_field_evidence, initial_conflicts)
         if save_intermediate:
             save_intermediate_result(
                 logs_dir,
@@ -359,6 +388,7 @@ def extract_record_rows(
         failed_eval_payloads = log_eval_entries(failed_evals, logs_dir, record_index, record, "ocr_failed", debug, logger)
         metadata["field_evidence"].extend(initial_field_evidence)
         metadata["conflict_evidence"].extend(initial_conflicts)
+        metadata["row_match_evidence"].extend(initial_row_match_evidence)
         metadata["extract_evaluations"].extend([*initial_eval_payloads, *failed_eval_payloads])
         retry_context = ImageTableContext(
             external_ocr_used=external_ocr_used,
@@ -385,6 +415,9 @@ def extract_record_rows(
                 "ocr_skipped_reason": "",
                 "image_count": len(parsed.image_urls),
                 "llm_format": llm_format,
+                "prompt_version": initial_llm_result.prompt_version,
+                "prompt_hash": initial_llm_result.prompt_hash,
+                "response_hash": initial_llm_result.response_hash,
                 "llm_parse_success": not bool(initial_llm_result.parse_error),
                 "need_manual_review": True,
                 "review_reason": f"OCR 全部失败，保留首轮融合结果；{IMAGE_TABLE_RISK_MESSAGE}",
@@ -396,6 +429,7 @@ def extract_record_rows(
                 "final_attempt": "initial",
             }
         )
+        _append_confidence_metadata(metadata, initial_rows, initial_field_evidence, initial_conflicts)
         if save_intermediate:
             save_intermediate_result(
                 logs_dir,
@@ -418,7 +452,7 @@ def extract_record_rows(
 
     retry_llm_result = extract_once_detail(
         record, record_index, llm_client, logs_dir, today, parsed.clean_text, parsed.tables_text, ocr_summary.text, len(parsed.image_urls),
-        "ocr_retry", debug, logger, field_mapping, llm_format, table_result.records, text_rule_result.records, field_evidence, no_llm=False, run_id=run_id
+        "ocr_retry", debug, logger, field_mapping, llm_format, table_result.records, text_rule_result.records, field_evidence, no_llm=False, run_id=run_id, failure_collector=metadata["failed_records"], prompt_version=prompt_version
     )
     retry_llm_evidence = llm_result_to_field_evidence(retry_llm_result, source_id, info_id, attempt="ocr_retry")
     retry_fusion = fuse_record_sources(
@@ -449,10 +483,13 @@ def extract_record_rows(
     final_fusion = retry_fusion if final_attempt == "ocr_retry" else initial_fusion
     retry_field_evidence = _with_context(retry_fusion.field_evidence, record_index, "ocr_retry")
     retry_conflicts = _with_context(retry_fusion.conflict_evidence, record_index, "ocr_retry")
+    retry_row_match_evidence = _with_context(retry_fusion.row_match_evidence, record_index, "ocr_retry")
     _append_jsonl_many(logs_dir / "field_evidence.jsonl", retry_field_evidence)
     _append_jsonl_many(logs_dir / "conflict_evidence.jsonl", retry_conflicts)
+    _append_jsonl_many(logs_dir / "row_match_evidence.jsonl", retry_row_match_evidence)
     metadata["field_evidence"].extend([*initial_field_evidence, *retry_field_evidence])
     metadata["conflict_evidence"].extend([*initial_conflicts, *retry_conflicts])
+    metadata["row_match_evidence"].extend([*initial_row_match_evidence, *retry_row_match_evidence])
     metadata["extract_evaluations"].extend([*initial_eval_payloads, *retry_eval_payloads])
     retry_context = ImageTableContext(
         external_ocr_used=external_ocr_used,
@@ -479,6 +516,9 @@ def extract_record_rows(
             "ocr_skipped_reason": "",
             "image_count": len(parsed.image_urls),
             "llm_format": llm_format,
+            "prompt_version": retry_llm_result.prompt_version,
+            "prompt_hash": retry_llm_result.prompt_hash,
+            "response_hash": retry_llm_result.response_hash,
             "llm_parse_success": not bool(retry_llm_result.parse_error),
             "need_manual_review": final_fusion.need_manual_review,
             "review_reason": final_fusion.review_reason,
@@ -490,6 +530,9 @@ def extract_record_rows(
             "final_attempt": final_attempt,
         }
     )
+    final_field_evidence = retry_field_evidence if final_attempt == "ocr_retry" else initial_field_evidence
+    final_conflicts = retry_conflicts if final_attempt == "ocr_retry" else initial_conflicts
+    _append_confidence_metadata(metadata, final_rows, final_field_evidence, final_conflicts)
     logger.info("OCR 前 confidence_score=%s, OCR 后 confidence_score=%s, improved=%s, final_attempt=%s", initial_score, retry_score, retry_score > initial_score, final_attempt)
     if save_intermediate:
         save_intermediate_result(
@@ -529,6 +572,7 @@ def extract_once(
     table_rule_records: List[Dict[str, Any]] | None = None,
     text_rule_records: List[Dict[str, Any]] | None = None,
     field_evidence: List[Dict[str, Any]] | None = None,
+    prompt_version: str = "v3",
 ) -> List[Dict[str, Any]]:
     return extract_once_detail(
         record,
@@ -548,6 +592,7 @@ def extract_once(
         table_rule_records,
         text_rule_records,
         field_evidence,
+        prompt_version=prompt_version,
     ).records
 
 
@@ -571,15 +616,20 @@ def extract_once_detail(
     field_evidence: List[Dict[str, Any]] | None = None,
     no_llm: bool = False,
     run_id: str = "",
+    failure_collector: List[Dict[str, Any]] | None = None,
+    prompt_version: str = "v3",
 ) -> LlmExtractionResult:
     field_mapping = field_mapping or load_field_mapping(None)
     if no_llm:
         logger.info("no_llm=true, 跳过大模型调用, attempt=%s", attempt)
-        return LlmExtractionResult(records=[], need_manual_review=False, review_reason="", raw_output="")
+        return LlmExtractionResult(records=[], need_manual_review=False, review_reason="", raw_output="", prompt_version="none")
     if llm_format == "legacy":
         prompt = build_extract_prompt(record, clean_text, tables_text, image_ocr_text, today, field_mapping=field_mapping)
+        effective_prompt_version = "legacy"
+        prompt_hash = hash_text(prompt)
     else:
-        prompt = build_extract_prompt_v2(
+        prompt_payload = build_prompt(
+            prompt_version,
             record,
             clean_text,
             tables_text,
@@ -590,6 +640,9 @@ def extract_once_detail(
             text_rule_records=text_rule_records,
             field_evidence=field_evidence,
         )
+        prompt = prompt_payload.text
+        effective_prompt_version = prompt_payload.version
+        prompt_hash = prompt_payload.prompt_hash
     try:
         if llm_format == "legacy":
             raw_output = llm_client.extract(prompt)
@@ -610,23 +663,28 @@ def extract_once_detail(
         raw_output = "[]"
         masked_error = mask_sensitive_text(str(llm_exc))
         logger.error("大模型调用是否成功: false, attempt=%s, error=%s", attempt, masked_error)
-        append_jsonl(
-            logs_dir / "failed_records.jsonl",
-            {
-                "run_id": run_id,
-                "phase": "llm",
-                "attempt": attempt,
-                "record_index": record_index,
-                "Title": record.get("Title"),
-                "SourceURL": record.get("SourceURL"),
-                "error": masked_error,
-            },
-        )
+        failure_payload = {
+            "run_id": run_id,
+            "phase": "llm",
+            "attempt": attempt,
+            "record_index": record_index,
+            "source_id": record.get("_source_id"),
+            "info_id": record.get("info_id") or (record.get("_direct_fields") or {}).get("info_id"),
+            "Title": record.get("Title"),
+            "SourceURL": record.get("SourceURL"),
+            "error": masked_error,
+        }
+        append_jsonl(logs_dir / "llm_errors.jsonl", failure_payload)
+        if failure_collector is not None:
+            failure_collector.append(failure_payload)
 
         rows = normalize_llm_rows(raw_output, record, today, logs_dir, field_mapping=field_mapping)
         result = LlmExtractionResult(records=rows, raw_output=raw_output, parse_error=masked_error, need_manual_review=True, review_reason=masked_error)
         logger.info("llm_format=%s parse_success=false need_manual_review=true review_reason=%s", llm_format, masked_error)
     logger.info("模型返回行数: %s, attempt=%s", len(rows), attempt)
+    result.prompt_version = effective_prompt_version
+    result.prompt_hash = prompt_hash
+    result.response_hash = hash_text(result.raw_output)
     if debug:
         logger.debug("抽取上下文: attempt=%s image_count=%s ocr_text_length=%s", attempt, image_count, len(image_ocr_text or ""))
     return result

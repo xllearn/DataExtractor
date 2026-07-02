@@ -16,6 +16,9 @@ class LlmExtractionResult:
     review_reason: str = ""
     raw_output: str = ""
     parse_error: str = ""
+    prompt_version: str = ""
+    prompt_hash: str = ""
+    response_hash: str = ""
 
 
 def _coerce_bool(value: Any) -> bool:

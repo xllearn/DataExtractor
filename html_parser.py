@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import logging
 import re
 from typing import List, Optional
@@ -6,12 +6,15 @@ from urllib.parse import urljoin
 
 from bs4 import BeautifulSoup
 
+from table_normalizer import NormalizedTable, normalize_table
+
 
 @dataclass
 class ParsedHtml:
     clean_text: str
     tables_text: str
     image_urls: List[str]
+    normalized_tables: List[NormalizedTable] = field(default_factory=list)
 
 
 def parse_html_content(html: object, image_base_url: str = "", logger: Optional[logging.Logger] = None) -> ParsedHtml:
@@ -22,10 +25,11 @@ def parse_html_content(html: object, image_base_url: str = "", logger: Optional[
         tag.decompose()
 
     image_urls = _extract_image_urls(soup, image_base_url, logger)
-    tables_text = "\n\n".join(_table_to_markdown(table) for table in soup.find_all("table"))
+    normalized_tables = [normalize_table(table, table_index=index) for index, table in enumerate(soup.find_all("table"), start=1)]
+    tables_text = "\n\n".join(table.markdown for table in normalized_tables if table.markdown)
     clean_text = _extract_clean_text(soup)
 
-    return ParsedHtml(clean_text=clean_text, tables_text=tables_text, image_urls=image_urls)
+    return ParsedHtml(clean_text=clean_text, tables_text=tables_text, image_urls=image_urls, normalized_tables=normalized_tables)
 
 
 def _extract_clean_text(soup: BeautifulSoup) -> str:

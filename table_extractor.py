@@ -20,6 +20,7 @@ from field_cleaners import (
     is_age_range,
     normalize_person_type,
 )
+from table_normalizer import NormalizedTable
 
 
 DEDUP_FIELDS = [
@@ -94,8 +95,8 @@ def _clean_cell(value: Any) -> str:
     return " ".join(str(value or "").split())
 
 
-def _evidence(source_id: str, info_id: str, field: str, value: str, evidence: str, confidence: float, source: str, rule_name: str) -> Dict[str, Any]:
-    return {
+def _evidence(source_id: str, info_id: str, field: str, value: str, evidence: str, confidence: float, source: str, rule_name: str, **extra: Any) -> Dict[str, Any]:
+    payload = {
         "source_id": source_id,
         "info_id": info_id,
         "field": field,
@@ -105,6 +106,8 @@ def _evidence(source_id: str, info_id: str, field: str, value: str, evidence: st
         "source": source,
         "rule_name": rule_name,
     }
+    payload.update(extra)
+    return payload
 
 
 def _rows_from_html_table(table) -> List[List[str]]:
@@ -233,6 +236,102 @@ def _extract_from_rows(
     return result
 
 
+def _extract_from_normalized_tables(
+    normalized_tables: Sequence[NormalizedTable],
+    source_id: str,
+    info_id: str,
+    table_mapping: TableMapping,
+    field_mapping: FieldMapping,
+) -> RuleExtractionResult:
+    result = RuleExtractionResult()
+    alias_to_header = {**table_mapping.alias_to_header, **field_mapping.alias_to_header}
+    for table in normalized_tables:
+        for cells in table.rows:
+            record: Dict[str, Any] = {}
+            extra_notes: List[str] = []
+            for cell in cells:
+                value = _clean_cell(cell.text)
+                if not value:
+                    continue
+                header_path = " > ".join(cell.header_path)
+                raw_header = cell.header_path[-1] if cell.header_path else ""
+                target = raw_header if raw_header in field_mapping.headers else alias_to_header.get(raw_header)
+                evidence_text = f"table {table.table_index} row {cell.row_index} col {cell.col_index}: {header_path or raw_header}={value}"
+                evidence_extra = {
+                    "table_index": table.table_index,
+                    "row_index": cell.row_index,
+                    "col_index": cell.col_index,
+                    "header": raw_header,
+                    "header_path": header_path,
+                    "cell_text": value,
+                    "caption": table.caption,
+                    "evidence_id": f"table:{table.table_index}:{cell.row_index}:{cell.col_index}",
+                }
+                if target and target in field_mapping.headers:
+                    if target == PERSON_TYPE_FIELD:
+                        normalized_person_type = normalize_person_type(value)
+                        if not normalized_person_type:
+                            note = invalid_person_type_note(value)
+                            if note:
+                                extra_notes.append(note)
+                                result.field_evidence.append(
+                                    _evidence(
+                                        source_id,
+                                        info_id,
+                                        NOTE_FIELD,
+                                        note,
+                                        evidence_text,
+                                        table_mapping.confidence,
+                                        "table",
+                                        "normalized_table_header_path",
+                                        **evidence_extra,
+                                    )
+                                )
+                            continue
+                        value = normalized_person_type
+                    elif target == INTERVAL_FIELD:
+                        if is_age_range(value):
+                            note = age_range_note(value)
+                            extra_notes.append(note)
+                            result.field_evidence.append(
+                                _evidence(
+                                    source_id,
+                                    info_id,
+                                    NOTE_FIELD,
+                                    note,
+                                    evidence_text,
+                                    table_mapping.confidence,
+                                    "table",
+                                    "normalized_table_header_path",
+                                    **evidence_extra,
+                                )
+                            )
+                            continue
+                        value = extract_reimbursement_interval(value) or value
+                    record[target] = value
+                    result.field_evidence.append(
+                        _evidence(
+                            source_id,
+                            info_id,
+                            target,
+                            value,
+                            evidence_text,
+                            table_mapping.confidence,
+                            "table",
+                            "normalized_table_header_path",
+                            **evidence_extra,
+                        )
+                    )
+                elif raw_header:
+                    extra_notes.append(f"{header_path or raw_header}={value}")
+            if extra_notes:
+                for note in extra_notes:
+                    record[NOTE_FIELD] = append_note(record.get(NOTE_FIELD), note)
+            if record:
+                result.records.append(normalize_record_fields(record, field_mapping))
+    return result
+
+
 def _merge_results(results: Sequence[RuleExtractionResult]) -> RuleExtractionResult:
     merged = RuleExtractionResult()
     seen_records = set()
@@ -305,10 +404,14 @@ def extract_table_records(
     info_id: str = "",
     config: TableMapping | None = None,
     field_mapping: FieldMapping | None = None,
+    normalized_tables: Sequence[NormalizedTable] | None = None,
 ) -> RuleExtractionResult:
-    return _merge_results(
-        [
-            extract_tables_from_html(html, source_id=source_id, info_id=info_id, config=config, field_mapping=field_mapping),
-            extract_tables_from_text(text, source_id=source_id, info_id=info_id, config=config, field_mapping=field_mapping),
-        ]
-    )
+    table_mapping = config or load_table_mapping(None)
+    field_mapping = field_mapping or load_field_mapping(None)
+    results: List[RuleExtractionResult] = []
+    if normalized_tables:
+        results.append(_extract_from_normalized_tables(normalized_tables, source_id, info_id, table_mapping, field_mapping))
+    else:
+        results.append(extract_tables_from_html(html, source_id=source_id, info_id=info_id, config=table_mapping, field_mapping=field_mapping))
+    results.append(extract_tables_from_text(text, source_id=source_id, info_id=info_id, config=table_mapping, field_mapping=field_mapping))
+    return _merge_results(results)

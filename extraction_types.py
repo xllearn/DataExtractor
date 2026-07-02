@@ -14,5 +14,6 @@ class FusionResult:
     records: List[Dict[str, Any]] = field(default_factory=list)
     field_evidence: List[Dict[str, Any]] = field(default_factory=list)
     conflict_evidence: List[Dict[str, Any]] = field(default_factory=list)
+    row_match_evidence: List[Dict[str, Any]] = field(default_factory=list)
     need_manual_review: bool = False
     review_reason: str = ""

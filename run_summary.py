@@ -15,7 +15,7 @@ def _now_iso() -> str:
 
 
 def _retry_id(record: Dict[str, Any]) -> str:
-    for key in ("info_id", "source_id", "_source_id", "SourceURL"):
+    for key in ("info_id", "source_id", "_source_id"):
         value = str(record.get(key) or "").strip()
         if value:
             return value
@@ -59,7 +59,7 @@ class RunSummary:
         self.ocr_failed_records += 1 if ocr_failed else 0
         self.llm_parse_failed_records += 1 if llm_parse_failed else 0
 
-    def record_failure(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+    def record_failure(self, payload: Dict[str, Any], count_record_failure: bool = True) -> Dict[str, Any]:
         safe = {
             "run_id": self.run_id,
             "record_index": payload.get("record_index", ""),
@@ -71,7 +71,8 @@ class RunSummary:
             "error": mask_sensitive_text(str(payload.get("error", ""))),
         }
         self.failed_records.append(safe)
-        self.failed_record_count += 1
+        if count_record_failure:
+            self.failed_record_count += 1
         return safe
 
     def add_output_path(self, path: Path) -> None:

@@ -605,3 +605,35 @@ Complete the first-stage repository optimization on `codex/db-to-excel-extractor
 - The fixed Excel business headers and main result sheet order were not changed.
 - No `.env`, API keys, database credentials, generated Excel files, `logs/`, `outputs/`, or `temp_images/` are committed.
 - The pre-existing untracked `Q57D2088.tmp` remains untracked and is not part of this task.
+
+## 2026-07-02 Round 16
+
+### Goal
+
+Continue optimization on `codex/db-to-excel-extractor`: start the project first, close the first-stage leftovers, then implement phase-2 quality, explainability, prompt-versioning, and regression-reporting work before pushing.
+
+### Completed
+
+- Started the local API server at `http://127.0.0.1:8000/`; `/api/health` returned `{"ok":true}`.
+- Unified final failure artifacts through `RunSummary.record_failure()`. LLM runtime errors now go to `llm_errors.jsonl` plus metadata collection, and final `failed_records.jsonl` is written by `RunSummary.write_artifacts()`.
+- Changed `retry_ids.txt` generation to use only rerunnable `info_id`, `source_id`, or `_source_id`; `SourceURL` is no longer used as a retry id fallback.
+- Removed private pipeline imports from `main.py` while keeping local compatibility aliases for older tests.
+- Hardened OCR image download SSRF protections with DNS resolution, private/link-local/loopback/multicast/unspecified/reserved address rejection, redirect rejection with target revalidation, and signed URL masking in diagnostics.
+- Added `table_normalizer.py` for normalized table cells/tables with spans, multi-level headers, captions, inherited blanks, Markdown escaping, original coordinates, and header paths.
+- Updated HTML parsing and table extraction to use normalized tables first and emit coordinate-rich field evidence.
+- Added `record_alignment.py` and integrated similarity-based row alignment into fusion, with row-match evidence written to metadata and Excel.
+- Added `field_confidence.py`, workbook sheets `字段置信度`, `人工复核`, and `行匹配证据`, and pipeline metadata generation for field confidence and review rows.
+- Added `prompt_registry.py`, `--prompt-version`, default v3 prompt text, and prompt/response hashes in collection logs.
+- Added `quality_eval.py` and `config/quality_thresholds.yml` for generated-vs-manual workbook comparison reports.
+- Added focused regression tests for failure collection, import boundaries, table normalization/extraction coordinates, row alignment, field confidence, Excel review sheets, prompt registry, quality evaluation, and OCR DNS/redirect/masking safety.
+
+### Verification
+
+- New phase-2 focused tests: `py -m pytest tests/test_failure_collection_stage2.py tests/test_import_lint_boundaries.py tests/test_table_normalizer.py tests/test_table_extractor_coordinates.py tests/test_record_alignment.py tests/test_field_confidence.py tests/test_excel_writer_review.py tests/test_prompt_registry.py tests/test_quality_eval_cli.py tests/test_image_ocr_security.py -q` passed, 24 tests.
+- Compatibility regression for previously failing areas: `py -m pytest tests/test_excel_multisheet.py tests/test_image_table_extraction_flow.py tests/test_ocr_status_and_image_risk.py tests/test_person_type_quality.py tests/test_record_fusion.py tests/test_record_alignment.py -q` passed.
+- Full regression: `py -m pytest -q` passed with the existing FastAPI/Starlette deprecation warning.
+
+### Notes
+
+- No `.env`, API keys, database credentials, generated Excel files, `logs/`, `outputs/`, or `temp_images/` are committed.
+- The pre-existing untracked `Q57D2088.tmp` remains untracked and is not part of this task.

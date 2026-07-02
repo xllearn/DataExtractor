@@ -130,6 +130,7 @@ def build_arg_parser(settings: Settings) -> argparse.ArgumentParser:
     parser.add_argument("--keyword-mode", choices=["or", "and"], default="")
     parser.add_argument("--selected-ids", default="")
     parser.add_argument("--llm-format", choices=["v2", "legacy"], default="v2")
+    parser.add_argument("--prompt-version", choices=["v2", "v3"], default="v3")
     parser.add_argument("--llm-config", default="config/llm_config.yml")
     parser.add_argument("--table-config", default="config/table_mapping.yml")
     parser.add_argument("--no-llm", action="store_true")

@@ -13,6 +13,7 @@ from field_cleaners import (
     is_age_range,
     normalize_person_type,
 )
+from record_alignment import align_candidate_records, align_sources
 from rule_extractor import is_valid_disease_name, normalize_disease_name
 
 
@@ -34,7 +35,8 @@ def _info_id(record: Dict[str, Any]) -> str:
 
 
 def align_records_by_similarity(base_records: Sequence[Dict[str, Any]], candidate_records: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    return [candidate_records[index] if index < len(candidate_records) else {} for index in range(len(base_records))]
+    aligned, _evidence = align_candidate_records(base_records, candidate_records, "base", "candidate")
+    return aligned
 
 
 def _base_records(table_records: List[Dict[str, Any]], text_rule_records: List[Dict[str, Any]], llm_records: List[Dict[str, Any]]) -> tuple[str, List[Dict[str, Any]]]:
@@ -402,13 +404,11 @@ def fuse_record_sources(
     llm_evidence: List[Dict[str, Any]],
     field_mapping: FieldMapping,
 ) -> FusionResult:
-    base_source, base = _base_records(table_records, text_rule_records, llm_records)
-    if llm_records and len(llm_records) > len(base):
-        base = [*base, *llm_records[len(base) :]]
-
-    aligned_table = align_records_by_similarity(base, table_records)
-    aligned_text = align_records_by_similarity(base, text_rule_records)
-    aligned_llm = align_records_by_similarity(base, llm_records)
+    base_source, _initial_base = _base_records(table_records, text_rule_records, llm_records)
+    base, aligned_sources, row_match_evidence = align_sources(table_records, text_rule_records, llm_records)
+    aligned_table = aligned_sources["table"]
+    aligned_text = aligned_sources["text_rule"]
+    aligned_llm = aligned_sources["llm"]
 
     fused_rows: List[Dict[str, Any]] = []
     conflicts: List[Dict[str, Any]] = []
@@ -448,6 +448,7 @@ def fuse_record_sources(
         records=fused_rows,
         field_evidence=_mark_chosen(evidence, fused_rows),
         conflict_evidence=conflicts,
+        row_match_evidence=row_match_evidence,
         need_manual_review=bool(review_reasons),
         review_reason="；".join(review_reasons),
     )
