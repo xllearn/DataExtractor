@@ -736,3 +736,15 @@ Continue optimization on `codex/db-to-excel-extractor`: start the project first,
 - Review hardening added regressions for quoted `writeback.enabled: "false"`, strict JSON boolean `dry_run`, and audit-write failure before a real commit. The red check failed as expected with 3 failures against the initial implementation.
 - Verification: `py -m pytest tests/test_writeback_preview.py -q` passed, output `........ [100%]` with the existing FastAPI/Starlette deprecation warning.
 - Regression verification: `py -m pytest tests/test_writeback_preview.py tests/test_api_server.py tests/test_api_review.py tests/test_api_quality.py tests/test_web_app_static.py tests/test_core.py -q` passed, output `.................................................... [100%]` with the existing FastAPI/Starlette deprecation warning.
+
+## 2026-07-02 Phase 3 Task 8
+
+- Added `config/app_config.yml` and `app_config_loader.py` for server host/port, explicit CORS origins, worker count, upload size, and API token enforcement settings with `${ENV_VAR}` expansion and strict missing-env errors.
+- Added optional Bearer token middleware. `/api/health` and `/api/version` remain public; when `api.require_token=true`, other routes require `Authorization: Bearer <DATAEXTRACTOR_API_TOKEN>`.
+- CORS remains closed by default and only enables configured explicit origins. Wildcard origins are rejected by config validation.
+- Upload size limits now come from app config while keeping the 20MB default, and startup prints a sanitized effective app config without token values.
+- Added tests for token auth, public health/version exemptions, invalid bearer rejection, configured CORS, sanitized status/version output, app config env expansion, strict missing env behavior, and `api_server.py --app-config` startup host/port.
+- Red TDD check: `py -m pytest tests/test_api_auth.py::test_main_uses_app_config_host_port_and_prints_sanitized_config -q` failed against the first implementation because `uvicorn.run()` still used raw CLI host/port and did not pass the loaded app config into `create_app`.
+- Review hardening fixed two regressions: upload extension validation cannot be relaxed by config and direct `api_server.py --app-config` startup is no longer blocked by import-time loading of a bad default app config. The red check failed as expected before the fixes.
+- Verification: `py -m pytest tests/test_api_auth.py tests/test_app_config_loader.py -q` passed, output `........ [100%]` with the existing FastAPI/Starlette deprecation warning.
+- Regression verification: `py -m pytest tests/test_api_server.py tests/test_api_auth.py tests/test_app_config_loader.py -q` passed, output `............................ [100%]` with the existing FastAPI/Starlette deprecation warning.

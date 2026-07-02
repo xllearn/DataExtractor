@@ -1,5 +1,7 @@
 import json
+import hmac
 import logging
+import os
 import re
 import subprocess
 import sys
@@ -17,11 +19,13 @@ from typing import Any, Callable, List, Optional
 from urllib.parse import quote
 
 from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from openpyxl import load_workbook
 from pydantic import BaseModel, StrictBool
 
+from app_config_loader import AppConfig, coerce_app_config, sanitized_app_config
 from config import PROJECT_ROOT, apply_llm_config, load_settings
 from config_loader import ConfigError, load_db_config, parse_selected_ids, validate_db_config_ready
 from db_reader import count_configured_records, fetch_configured_records
@@ -88,15 +92,15 @@ class ApiError(Exception):
     def __init__(self, status_code: int, detail: str, error_type: str):
         super().__init__(detail)
         self.status_code = status_code
-        self.detail = mask_sensitive_text(detail)
+        self.detail = _mask_api_text(detail)
         self.error_type = error_type
 
 
 def _json_error(status_code: int, detail: object, error_type: str) -> JSONResponse:
     if isinstance(detail, dict):
-        safe_detail: object = {str(key): mask_sensitive_text(str(value)) for key, value in detail.items()}
+        safe_detail: object = {_mask_api_text(key): _mask_api_text(value) for key, value in detail.items()}
     else:
-        safe_detail = mask_sensitive_text(str(detail or "请求失败"))
+        safe_detail = _mask_api_text(str(detail or "请求失败"))
     return JSONResponse(status_code=status_code, content={"detail": safe_detail, "error_type": error_type})
 
 
@@ -149,7 +153,7 @@ def _database_status(config_path: str) -> tuple[bool, str]:
         validate_db_config_ready(db_config)
         return True, "数据库配置可用"
     except ConfigError as exc:
-        return False, mask_sensitive_text(str(exc))
+        return False, _mask_api_text(str(exc))
 
 
 def _ensure_database_ready(config_path: str) -> None:
@@ -190,6 +194,13 @@ def _mask_api_text(value: object) -> str:
     text = mask_sensitive_text(str(value or ""))
     text = SENSITIVE_QUERY_RE.sub(r"\1***", text)
     return SENSITIVE_NAME_RE.sub("[redacted]", text)
+
+
+def _valid_bearer_token(authorization: str, expected_token: str) -> bool:
+    scheme, separator, credentials = str(authorization or "").partition(" ")
+    if not separator or scheme.lower() != "bearer":
+        return False
+    return hmac.compare_digest(credentials.strip(), expected_token)
 
 
 def _default_record_provider(config_path: str):
@@ -433,12 +444,18 @@ def _validate_uploaded_workbook(path: Path) -> None:
         workbook.close()
 
 
-def _store_uploaded_xlsx(output_root: Path, upload_id: str, filename: str, file_bytes: bytes) -> dict:
+def _store_uploaded_xlsx(
+    output_root: Path,
+    upload_id: str,
+    filename: str,
+    file_bytes: bytes,
+    max_upload_bytes: int = MAX_UPLOAD_BYTES,
+) -> dict:
     suffix = Path(str(filename).replace("\\", "/")).suffix.lower()
     if suffix != ".xlsx":
         raise ApiError(400, "只允许上传 .xlsx 文件", "ValidationError")
-    if len(file_bytes) > MAX_UPLOAD_BYTES:
-        raise ApiError(413, f"上传文件超过 {MAX_UPLOAD_BYTES // (1024 * 1024)}MB 限制", "UploadTooLarge")
+    if len(file_bytes) > max_upload_bytes:
+        raise ApiError(413, f"上传文件超过 {max_upload_bytes // (1024 * 1024)}MB 限制", "UploadTooLarge")
 
     upload_root = _uploads_root(output_root)
     target_dir = (upload_root / upload_id).resolve()
@@ -652,6 +669,8 @@ def create_app(
     config_path: str = "config/db_config.yml",
     field_config_path: str = "config/field_mapping.yml",
     llm_config_path: str = "config/llm_config.yml",
+    app_config_path: str | Path | None = None,
+    app_config: AppConfig | dict[str, Any] | None = None,
     output_dir: str | Path = "outputs/web",
     log_dir: str | Path = "logs/web",
     record_provider: Optional[Callable[..., list]] = None,
@@ -660,6 +679,11 @@ def create_app(
     writeback_service: Optional[Any] = None,
     use_subprocess_runner: bool = False,
 ) -> FastAPI:
+    effective_app_config = coerce_app_config(app_config, app_config_path)
+    api_token = str(os.getenv("DATAEXTRACTOR_API_TOKEN") or "").strip()
+    if effective_app_config.api.require_token and not api_token:
+        raise ConfigError("api.require_token=true requires DATAEXTRACTOR_API_TOKEN")
+    max_upload_bytes = effective_app_config.uploads.max_file_size_bytes
     output_root = Path(output_dir)
     if not output_root.is_absolute():
         output_root = PROJECT_ROOT / output_root
@@ -698,15 +722,30 @@ def create_app(
     review_service = ReviewService(output_root)
     quality_service = QualityService(output_root)
     active_writeback_service = writeback_service or WritebackService(output_root, config_path=config_path)
-    executor = ThreadPoolExecutor(max_workers=2)
+    executor = ThreadPoolExecutor(max_workers=effective_app_config.jobs.max_workers)
     jobs: dict[str, dict] = {}
     cancelled_jobs: set[str] = set()
     jobs_lock = Lock()
 
     app = FastAPI(title="DataExtractor API")
+    if effective_app_config.server.cors_origins:
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=effective_app_config.server.cors_origins,
+            allow_methods=["*"],
+            allow_headers=["*"],
+        )
     web_dir = PROJECT_ROOT / "web"
     if web_dir.exists():
         app.mount("/web", StaticFiles(directory=web_dir), name="web")
+
+    @app.middleware("http")
+    async def api_token_middleware(request: Request, call_next):
+        if not effective_app_config.api.require_token or request.url.path in {"/api/health", "/api/version"}:
+            return await call_next(request)
+        if not _valid_bearer_token(str(request.headers.get("authorization") or ""), api_token):
+            return _json_error(401, "Unauthorized", "Unauthorized")
+        return await call_next(request)
 
     @app.exception_handler(ApiError)
     async def api_error_handler(_request: Request, exc: ApiError):
@@ -758,6 +797,7 @@ def create_app(
             "database_status_reason": reason,
             "safe_to_query": safe_to_query,
             "web_app_version": WEB_APP_VERSION,
+            "app_config": sanitized_app_config(effective_app_config),
         }
 
     @app.get("/api/articles")
@@ -948,18 +988,18 @@ def create_app(
             content_length = int(request.headers.get("content-length") or "0")
         except ValueError:
             content_length = 0
-        if content_length > MAX_UPLOAD_BYTES:
-            raise ApiError(413, f"upload exceeds {MAX_UPLOAD_BYTES // (1024 * 1024)}MB limit", "UploadTooLarge")
+        if content_length > max_upload_bytes:
+            raise ApiError(413, f"upload exceeds {max_upload_bytes // (1024 * 1024)}MB limit", "UploadTooLarge")
 
         body = await request.body()
-        if len(body) > MAX_UPLOAD_BYTES:
-            raise ApiError(413, f"upload exceeds {MAX_UPLOAD_BYTES // (1024 * 1024)}MB limit", "UploadTooLarge")
+        if len(body) > max_upload_bytes:
+            raise ApiError(413, f"upload exceeds {max_upload_bytes // (1024 * 1024)}MB limit", "UploadTooLarge")
 
         return _parse_multipart_upload(str(request.headers.get("content-type") or ""), body)
 
     def create_upload(filename: str, file_bytes: bytes) -> dict:
         upload_id = _new_upload_id()
-        return _store_uploaded_xlsx(output_root, upload_id, filename, file_bytes)
+        return _store_uploaded_xlsx(output_root, upload_id, filename, file_bytes, max_upload_bytes)
 
     def mark_upload_used(upload_id: str, job_id: str) -> None:
         payload = _read_upload_metadata(output_root, upload_id)
@@ -1199,7 +1239,7 @@ def create_app(
     async def quality_evaluate(request: Request):
         fields, filename, file_bytes = await parse_upload_request(request)
         try:
-            quality_service.validate_manual_upload(filename, file_bytes, MAX_UPLOAD_BYTES)
+            quality_service.validate_manual_upload(filename, file_bytes, max_upload_bytes)
         except QualityServiceError as exc:
             raise_quality_error(exc)
 
@@ -1209,7 +1249,7 @@ def create_app(
         job = read_job_or_404(job_id)
         generated_workbook = job_output_workbook_path(job)
         try:
-            return quality_service.evaluate(job_id, generated_workbook, filename, file_bytes, MAX_UPLOAD_BYTES)
+            return quality_service.evaluate(job_id, generated_workbook, filename, file_bytes, max_upload_bytes)
         except QualityServiceError as exc:
             raise_quality_error(exc)
 
@@ -1396,7 +1436,7 @@ def create_app(
     return app
 
 
-app = create_app()
+app = create_app() if __name__ != "__main__" else None
 
 
 def main() -> int:
@@ -1404,28 +1444,43 @@ def main() -> int:
     import uvicorn
 
     parser = argparse.ArgumentParser(description="启动 DataExtractor Web API")
-    parser.add_argument("--host", default="127.0.0.1")
-    parser.add_argument("--port", type=int, default=8000)
+    parser.add_argument("--app-config", default="config/app_config.yml")
+    parser.add_argument("--host", default=None)
+    parser.add_argument("--port", type=int, default=None)
     parser.add_argument("--config", default="config/db_config.yml")
     parser.add_argument("--field-config", default="config/field_mapping.yml")
     parser.add_argument("--llm-config", default="config/llm_config.yml")
     args = parser.parse_args()
+    effective_app_config = coerce_app_config(path=args.app_config)
+    host = args.host or effective_app_config.server.host
+    port = args.port if args.port is not None else effective_app_config.server.port
+    public_app_config = sanitized_app_config(effective_app_config)
+    public_app_config["server"]["host"] = host
+    public_app_config["server"]["port"] = port
     version = _version_payload()
     print("DataExtractor API starting")
     print(f"cwd={version['cwd']}")
     print(f"project_root={version['project_root']}")
     print(f"git_commit={version['git_commit']}")
+    print(f"effective_app_config={json.dumps(public_app_config, ensure_ascii=False, sort_keys=True)}")
     print(f"config={args.config}")
     print(f"field_config={args.field_config}")
     print(f"llm_config={args.llm_config}")
     print(f"web_app_version={version['web_app_version']}")
     uvicorn.run(
-        create_app(config_path=args.config, field_config_path=args.field_config, llm_config_path=args.llm_config),
-        host=args.host,
-        port=args.port,
+        create_app(
+            config_path=args.config,
+            field_config_path=args.field_config,
+            llm_config_path=args.llm_config,
+            app_config=effective_app_config,
+        ),
+        host=host,
+        port=port,
     )
     return 0
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    exit_code = main()
+    if exit_code:
+        raise SystemExit(exit_code)

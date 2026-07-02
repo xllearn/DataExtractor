@@ -1,0 +1,11 @@
+server:
+  host: "127.0.0.1"
+  port: 8000
+  cors_origins: []
+jobs:
+  max_workers: 2
+  job_ttl_days: 7
+uploads:
+  max_file_size_mb: 20
+api:
+  require_token: false
