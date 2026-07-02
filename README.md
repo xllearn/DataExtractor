@@ -2,7 +2,7 @@
 
 这个项目用于从 MySQL 数据库或本地调试 Excel 读取商业补充保险/医保政策文章，解析正文 HTML、表格、图片 OCR 文本，再调用 OpenAI-compatible 大模型抽取固定 26 列结构化数据，最后写入 xlsx 文件。
 
-项目目标是尽快可用：单进程命令行运行，不包含前端、任务队列、数据库写回或复杂架构。
+当前分支保留 CLI 独立运行能力，同时提供 FastAPI 服务、Web 工作台、后台 job、Excel 上传、人工复核、质量评估、默认关闭的数据库写回预留、API token 和 Docker 部署入口。
 
 ## 安装依赖
 
@@ -48,6 +48,41 @@ copy .env.example .env
 - `IMAGE_BASE_URL=`：当 HTML 图片是 `/upload/...` 或其他相对路径时，用这个基础地址拼接下载地址。
 
 不要把数据库密码或 API Key 写入代码。
+
+## 应用配置和安全
+
+服务端配置位于 `config/app_config.yml`，默认只绑定本机：
+
+```yaml
+server:
+  host: "127.0.0.1"
+  port: 8000
+  cors_origins: []
+jobs:
+  max_workers: 2
+  job_ttl_days: 7
+uploads:
+  max_file_size_mb: 20
+api:
+  require_token: false
+```
+
+配置值支持 `${ENV_VAR}` 展开。严格模式下缺失环境变量会报清晰错误。CORS 默认关闭，只允许显式配置的 origin；上传始终只允许 `.xlsx`，大小默认 20MB。
+
+如需启用 API token：
+
+```powershell
+$env:DATAEXTRACTOR_API_TOKEN="change-me"
+py api_server.py --app-config config/app_config.yml
+```
+
+并把 `config/app_config.yml` 中 `api.require_token` 改为 `true`。启用后，除 `/api/health` 和 `/api/version` 外，请求都需要：
+
+```text
+Authorization: Bearer <DATAEXTRACTOR_API_TOKEN>
+```
+
+API 响应、job metadata、日志接口和启动输出都会做脱敏处理，不返回 `.env`、`DATABASE_URL`、`LLM_API_KEY`、数据库密码或 token。
 
 ## 配置化数据库读取
 
@@ -503,7 +538,7 @@ py scripts\run_real_db_20.py --result-dir "$env:USERPROFILE\Desktop\DataExtracto
 启动后端：
 
 ```powershell
-py api_server.py --host 127.0.0.1 --port 8000
+py api_server.py --host 127.0.0.1 --port 8000 --app-config config/app_config.yml
 ```
 
 打开：
@@ -512,22 +547,160 @@ py api_server.py --host 127.0.0.1 --port 8000
 http://127.0.0.1:8000/
 ```
 
-页面支持数据库状态查看、关键词查询、勾选记录、`no_ocr` / `no_llm` 选项、生成 Excel 和下载 Excel。接口包括：
+页面支持配置状态查看、关键词分页查询、跨页勾选、抽取设置、Excel 上传、本次任务进度/日志/summary、历史任务、结果预览、下载、取消、人工复核和质量评估入口。接口包括：
 
 - `GET /api/health`
 - `GET /api/version`
 - `GET /api/config/status`
 - `GET /api/articles?keyword=医保&limit=20&offset=0`
+- `POST /api/uploads/excel`
+- `GET /api/uploads`
+- `DELETE /api/uploads/<upload_id>`
 - `POST /api/extract`
+- `POST /api/extract/uploaded`
 - `GET /api/jobs/<job_id>`
+- `GET /api/jobs/<job_id>/logs?tail=200&level=error`
+- `GET /api/jobs/<job_id>/summary`
 - `GET /api/jobs/<job_id>/preview`
+- `GET /api/jobs/<job_id>/download`
+- `POST /api/jobs/<job_id>/cancel`
+- `GET /api/jobs/<job_id>/review-items`
+- `POST /api/jobs/<job_id>/review-items/<item_id>`
+- `POST /api/jobs/<job_id>/apply-reviews`
+- `GET /api/jobs/<job_id>/reviewed-workbook`
+- `POST /api/quality/evaluate`
+- `GET /api/quality/reports/<report_id>`
+- `GET /api/quality/reports/<report_id>/download`
+- `POST /api/jobs/<job_id>/writeback/preview`
+- `POST /api/jobs/<job_id>/writeback/commit`
 - `GET /api/download/<file_id>`
 
 `/api/articles` 返回真实分页信息：`total`、`page`、`page_size`、`total_pages`、`has_next`、`has_prev`。前端支持上一页、下一页、每页 10/20/50、总数显示、搜索后回到第一页、跨页保留已选记录和清空已选择。
 
-`/api/extract` 创建后台 job 并返回 `job_id`、`status_url` 和 `result_page`。前端会自动跳转到 `/web/result.html?job_id=...`，结果页轮询 job 状态，成功后调用 preview API 预览 `结果数据` sheet 前 100 行，并提供下载按钮。job metadata 会写入 `outputs/web/jobs/<job_id>.json`，服务重启后已完成任务仍可查询和预览。下载接口只允许下载 `outputs/web/` 下由系统生成的 xlsx 文件，并防止路径穿越。当前页面没有登录权限系统，仅建议在本机或内网受控环境使用。
+`/api/extract` 创建后台 job 并返回 `job_id`、`status_url` 和 `result_page`。前端会停留在工作台轮询 job，也可打开 `/web/result.html?job_id=...` 查看结果页。job metadata 写入 `outputs/web/jobs/<job_id>.json`，服务重启后已完成任务仍可查询、预览和下载。
 
-`/api/version` 用于确认当前后端是不是本仓库当前版本，会返回 `project_root`、`cwd`、`git_commit`、`web_app_version` 和功能开关，不返回数据库连接串、API Key 或密码。启动 API 时终端也会打印这些信息，方便排查是否仍在运行旧目录、旧分支或旧进程。
+Job metadata 示例：
+
+```json
+{
+  "job_id": "job_20260702_010203_deadbeef",
+  "status": "success",
+  "progress_current": 5,
+  "progress_total": 5,
+  "input_mode": "configured-db",
+  "selected_ids": ["INFO-1"],
+  "download_url": "/api/download/result.xlsx",
+  "preview_url": "/api/jobs/job_20260702_010203_deadbeef/preview"
+}
+```
+
+下载、预览、summary、reviewed workbook 和质量报告下载都会限制在受控输出目录内，拒绝路径穿越。
+
+### Excel 上传
+
+上传接口只接受 `.xlsx`，会重新生成安全 `upload_id` 和文件名，不使用用户原始文件名作为路径：
+
+```powershell
+curl -F "file=@samples/db/input.xlsx" http://127.0.0.1:8000/api/uploads/excel
+curl -H "Content-Type: application/json" -d "{\"upload_id\":\"upload_...\",\"no_ocr\":true}" http://127.0.0.1:8000/api/extract/uploaded
+```
+
+Workbook 至少需要可识别的标题列和正文列，例如 `Title` + `Content`，或中文 `标题` + `正文/内容`。
+
+### 人工复核闭环
+
+生成 Excel 后可读取 `人工复核` sheet 中的待复核项：
+
+```text
+GET /api/jobs/<job_id>/review-items
+POST /api/jobs/<job_id>/review-items/<item_id>
+POST /api/jobs/<job_id>/apply-reviews
+GET /api/jobs/<job_id>/reviewed-workbook
+```
+
+Review item 示例：
+
+```json
+{
+  "item_id": "review_0001",
+  "row_index": 2,
+  "field": "报销比例",
+  "current_value": "80%",
+  "reviewed_value": "85%",
+  "confidence": 0.62,
+  "reason": "低置信度",
+  "status": "edited",
+  "comment": "按人工表修正"
+}
+```
+
+`apply-reviews` 会生成新的 `_reviewed` workbook，不覆盖原始 workbook，并写入 `人工复核` 和 `复核日志`。
+
+### 质量评估 API
+
+质量评估接口用某个 job 的生成 Excel 与上传的人工 Excel 对比：
+
+```powershell
+curl -F "job_id=job_..." -F "file=@samples/manual/reviewed.xlsx" http://127.0.0.1:8000/api/quality/evaluate
+```
+
+示例输出：
+
+```json
+{
+  "report_id": "quality_20260702_010203_deadbeef",
+  "overall_similarity": 0.93,
+  "core_field_similarity": 0.91,
+  "passed": true,
+  "worst_fields": [],
+  "worst_rows": [],
+  "missing_core_fields": [],
+  "low_confidence_count": 1,
+  "conflict_count": 0,
+  "download_url": "/api/quality/reports/quality_.../download"
+}
+```
+
+### 数据库写回预留
+
+写回功能默认关闭，不会写生产表。配置示例：
+
+```yaml
+writeback:
+  enabled: false
+  target_table: ""
+  key_column: "info_id"
+  allowed_columns: []
+```
+
+使用时必须先 `preview`，再 `commit`；`commit` 默认 `dry_run=true`，只有显式 JSON 布尔值 `false` 才会执行写入。写回只允许配置的 `allowed_columns`，SQL 值参数化，表名/列名校验并引用，审计日志写入失败时不会继续真实写库。
+
+### Docker 部署
+
+默认镜像不安装 PaddleOCR/PaddlePaddle：
+
+```powershell
+docker compose up --build
+```
+
+需要 OCR 依赖时使用 profile：
+
+```powershell
+docker compose --profile ocr up --build
+```
+
+Compose 会挂载：
+
+```text
+./outputs:/app/outputs
+./logs:/app/logs
+./uploads:/app/uploads
+./config:/app/config
+```
+
+容器内 API 绑定 `0.0.0.0:8000`，本地 `config/app_config.yml` 仍默认 `127.0.0.1:8000`。健康检查访问 `/api/health`。`.dockerignore` 排除 `.env`、运行输出、上传文件、缓存、虚拟环境和样本二进制文件，避免把密钥或生成文件打进 image。
+
+`/api/version` 用于确认当前后端版本，会返回 `project_root`、`cwd`、`git_commit`、`web_app_version` 和功能开关，不返回数据库连接串、API Key 或密码。启动 API 时终端也会打印脱敏后的有效配置，方便排查是否仍在运行旧目录、旧分支或旧进程。
 
 首页和结果页脚本使用版本参数加载，例如 `/web/app.js?v=20260701_job_fix` 和 `/web/result.js?v=20260701_job_fix`，用于避免浏览器继续执行旧版脚本造成 DOM id 不匹配或把 Excel 文件名当作 job_id。若页面曾打开过旧版本，请先重启后端，再用 `Ctrl+F5` 强制刷新；如果浏览器仍加载旧 JS，可清缓存或用无痕窗口打开。
 
@@ -541,7 +714,48 @@ py scripts\run_acceptance_all.py --result-dir "$env:USERPROFILE\Desktop\DataExtr
 
 脚本会运行 unittest、pytest、项目源码 compileall、AI 生成数据测试、前端 API 测试、真实数据库 3 条 smoke、真实数据库 20 条、图片导入和人工 Excel 对比。详细日志和生成文件写在桌面结果目录；仓库内只提交脱敏汇总文档。
 
+### 开发测试命令
+
+常用质量门禁：
+
+```powershell
+pip install -r requirements.txt
+pip install -r requirements-dev.txt
+py -m pytest
+py main.py --dry-run --input-xlsx "samples/db/新建 XLSX 工作表.xlsx" --limit 5
+py api_server.py --host 127.0.0.1 --port 8000
+curl http://127.0.0.1:8000/api/health
+py quality_eval.py --generated outputs/result.xlsx --manual samples/manual/人工.xlsx --output reports/eval_report.xlsx --json-output reports/eval_report.json
+docker compose up --build
+```
+
+如果样本文件不存在，可使用测试中的临时 workbook 或自建包含标题/正文列的 xlsx；自动化测试不依赖本地私有样本。
+
 ## 常见问题
+
+### 数据库未配置
+
+`/api/config/status` 会返回 `safe_to_query=false` 和脱敏原因。检查 `DATABASE_URL`、`config/db_config.yml database.url`、`source.table`，以及至少一个正文字段 `source.html_column` 或 `source.text_column`。
+
+### LLM API Key 未配置
+
+设置 `.env` 或环境变量中的 `LLM_API_KEY`，并确认 `config/llm_config.yml` 使用 `${LLM_API_KEY}`。只调试规则路径时可使用 `--no-llm` 或前端勾选“跳过 LLM”。
+
+### OCR 不可用
+
+前端会显示 `OCR 不可用`，并默认勾选“跳过 OCR”。可先用 `--no-ocr` 跑通流程，或安装 OCR 环境后再启动 API。
+
+### 429 限流
+
+LLM 限流会进入重试；如果仍失败，降低批量数量、增加 `LLM_RETRY_BACKOFF`，或稍后重跑 `logs/retry_ids.txt` 中的记录。
+
+### 上传文件格式错误
+
+上传只接受 `.xlsx`，文件大小默认 20MB，workbook 需要标题列和正文列。路径穿越文件名会被忽略并重新生成安全文件名。
+
+### job 找不到
+
+确认 `job_id` 形如 `job_YYYYMMDD_HHMMSS_xxxxxxxx`。服务只会从内存和 `outputs/web/jobs/` 读取受控 metadata；清理输出目录后历史 job 不可恢复。
 
 ### 图片相对路径无法下载怎么办？
 

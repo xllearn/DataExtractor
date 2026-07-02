@@ -771,3 +771,10 @@ Continue optimization on `codex/db-to-excel-extractor`: start the project first,
 - Red TDD check: `py -m pytest tests/test_api_jobs.py tests/test_api_uploads.py tests/test_web_static.py -q` failed once because the upload lifecycle test incorrectly expected the original filename instead of the generated safe upload filename.
 - Verification: `py -m pytest tests/test_api_jobs.py tests/test_api_uploads.py tests/test_web_static.py -q` passed, output `...... [100%]` with the existing FastAPI/Starlette deprecation warning.
 - Regression verification: `py -m pytest tests/test_api_server.py tests/test_job_store.py tests/test_extraction_service.py tests/test_web_app_static.py tests/test_api_jobs.py tests/test_api_uploads.py tests/test_web_static.py -q` passed, output `................................................ [100%]` with the existing FastAPI/Starlette deprecation warning.
+
+## 2026-07-02 Phase 3 Task 11
+
+- Updated README to reflect the current productized system instead of the older CLI-only description while preserving existing CLI commands and quality-eval compatibility examples.
+- Documented `config/app_config.yml`, API token setup, CORS defaults, upload limits, Web workbench usage, job metadata, upload flow, review item flow, quality evaluation API output, default-disabled writeback, Docker/compose deployment, common errors, and development test commands.
+- README now lists the Phase 3 API endpoints for health/version/config, articles, uploads, jobs/logs/summary/preview/download/cancel, review, quality, writeback, and downloads.
+- Documentation verification: `rg -n "不包含前端|当前页面没有|没有登录权限" README.md` returned no stale CLI-only/productization-negative wording.
