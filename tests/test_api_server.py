@@ -1,4 +1,5 @@
 import json
+from io import BytesIO
 import tempfile
 import time
 import unittest
@@ -13,6 +14,19 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 
 class ApiServerTests(unittest.TestCase):
+    def _xlsx_bytes(self, headers=None, rows=None):
+        from openpyxl import Workbook
+
+        workbook = Workbook()
+        sheet = workbook.active
+        sheet.append(headers or ["_source_id", "info_id", "Title", "SourceURL", "Content"])
+        for row in rows or [["UP-1", "INFO-UP", "Uploaded", "https://example.test/up", "<p>uploaded</p>"]]:
+            sheet.append(row)
+        buffer = BytesIO()
+        workbook.save(buffer)
+        workbook.close()
+        return buffer.getvalue()
+
     def _client(self, output_dir: Path):
         from api_server import create_app
         from excel_writer import write_extraction_workbook
@@ -358,6 +372,231 @@ class ApiServerTests(unittest.TestCase):
             self.assertNotIn("sk-test-token", raw_metadata)
             self.assertEqual(preview.status_code, 200)
             self.assertEqual(len(preview.json()["headers"]), 26)
+
+    def test_upload_xlsx_creates_uploaded_job_through_service_and_job_endpoints(self):
+        from api_server import create_app
+        from excel_writer import write_extraction_workbook
+        from field_mapping import load_field_mapping
+        from services.extraction_service import ExtractionResult
+
+        with tempfile.TemporaryDirectory() as tmp:
+            output_dir = Path(tmp) / "out"
+            log_root = Path(tmp) / "logs"
+            calls = []
+            case = self
+
+            class FakeService:
+                def run(self, request, progress_callback=None, cancel_checker=None):
+                    calls.append(request)
+                    uploaded_path = Path(request.input_xlsx)
+                    case.assertTrue(uploaded_path.exists())
+                    case.assertEqual(uploaded_path.suffix.lower(), ".xlsx")
+                    case.assertTrue(uploaded_path.resolve().is_relative_to((output_dir / "uploads").resolve()))
+                    case.assertNotIn("secret", uploaded_path.name.lower())
+                    if progress_callback:
+                        progress_callback({"progress_current": 1, "progress_total": 1, "current_title": "Uploaded"})
+                    output = output_dir / "uploaded_result.xlsx"
+                    logs = log_root / request.job_id
+                    logs.mkdir(parents=True, exist_ok=True)
+                    write_extraction_workbook(
+                        [{"info_id": "INFO-UPLOAD"}],
+                        output,
+                        template_path=output_dir / "missing.xlsx",
+                        field_mapping=load_field_mapping(None),
+                    )
+                    summary = logs / "summary.json"
+                    summary.write_text(json.dumps({"run_id": "run_upload_1", "input_mode": "uploaded-xlsx"}) + "\n", encoding="utf-8")
+                    return ExtractionResult(
+                        run_id="run_upload_1",
+                        input_mode="uploaded-xlsx",
+                        selected_ids=[],
+                        keyword="",
+                        total_records=1,
+                        output_rows=1,
+                        failed_record_count=0,
+                        output_excel_path=output,
+                        summary_path=summary,
+                        log_dir=logs,
+                    )
+
+            client = TestClient(create_app(extraction_service=FakeService(), output_dir=output_dir, log_dir=log_root))
+            response = client.post(
+                "/api/extract/upload",
+                data={"mode": "merge", "no_ocr": "true", "no_llm": "true", "prompt_version": "v2"},
+                files={
+                    "file": (
+                        r"C:\secret\source.xlsx",
+                        self._xlsx_bytes(),
+                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    )
+                },
+            )
+            created = response.json()
+            job = self._wait_job(client, created["job_id"])
+            summary = client.get(f"/api/jobs/{created['job_id']}/summary")
+            download = client.get(f"/api/jobs/{created['job_id']}/download")
+
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(created["status"], "queued")
+            self.assertEqual(len(calls), 1)
+            self.assertEqual(calls[0].input_xlsx and Path(calls[0].input_xlsx).suffix.lower(), ".xlsx")
+            self.assertEqual(calls[0].selected_ids, [])
+            self.assertEqual(calls[0].mode, "merge")
+            self.assertEqual(calls[0].prompt_version, "v2")
+            self.assertEqual(job["status"], "success")
+            self.assertEqual(job["input_mode"], "uploaded-xlsx")
+            self.assertEqual(job["run_id"], "run_upload_1")
+            self.assertEqual(summary.status_code, 200)
+            self.assertEqual(download.status_code, 200)
+            self.assertNotIn(str(output_dir), str(created))
+            self.assertNotIn(str(log_root), str(created))
+            self.assertNotIn("secret", str(created).lower())
+
+    def test_uploads_excel_then_extract_uploaded_job_and_list_delete_uploads(self):
+        from api_server import create_app
+        from excel_writer import write_extraction_workbook
+        from field_mapping import load_field_mapping
+        from services.extraction_service import ExtractionResult
+
+        with tempfile.TemporaryDirectory() as tmp:
+            output_dir = Path(tmp) / "out"
+            log_root = Path(tmp) / "logs"
+            calls = []
+
+            class FakeService:
+                def run(self, request, progress_callback=None, cancel_checker=None):
+                    calls.append(request)
+                    uploaded_path = Path(request.input_xlsx)
+                    self_test.assertTrue(uploaded_path.exists())
+                    self_test.assertTrue(uploaded_path.resolve().is_relative_to((output_dir / "uploads").resolve()))
+                    output = output_dir / "uploaded_result.xlsx"
+                    logs = log_root / request.job_id
+                    logs.mkdir(parents=True, exist_ok=True)
+                    write_extraction_workbook(
+                        [{"info_id": "INFO-UPLOAD"}],
+                        output,
+                        template_path=output_dir / "missing.xlsx",
+                        field_mapping=load_field_mapping(None),
+                    )
+                    summary = logs / "summary.json"
+                    summary.write_text(json.dumps({"run_id": "run_upload_2", "input_mode": "uploaded-xlsx"}) + "\n", encoding="utf-8")
+                    return ExtractionResult(
+                        run_id="run_upload_2",
+                        input_mode="uploaded-xlsx",
+                        selected_ids=[],
+                        keyword="",
+                        total_records=1,
+                        output_rows=1,
+                        failed_record_count=0,
+                        output_excel_path=output,
+                        summary_path=summary,
+                        log_dir=logs,
+                    )
+
+            self_test = self
+            client = TestClient(create_app(extraction_service=FakeService(), output_dir=output_dir, log_dir=log_root))
+            uploaded = client.post(
+                "/api/uploads/excel",
+                files={
+                    "file": (
+                        r"..\secret\source.xlsx",
+                        self._xlsx_bytes(),
+                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    )
+                },
+            )
+            upload_payload = uploaded.json()
+            listed_before = client.get("/api/uploads")
+            created = client.post(
+                "/api/extract/uploaded",
+                json={"upload_id": upload_payload["upload_id"], "mode": "merge", "no_ocr": True, "no_llm": True, "prompt_version": "v2"},
+            )
+            job = self._wait_job(client, created.json()["job_id"])
+            deleted_after_job = client.delete(f"/api/uploads/{upload_payload['upload_id']}")
+
+            self.assertEqual(uploaded.status_code, 200)
+            self.assertTrue(str(upload_payload["upload_id"]).startswith("upload_"))
+            self.assertNotIn("secret", str(upload_payload).lower())
+            self.assertEqual(listed_before.status_code, 200)
+            self.assertEqual(listed_before.json()["items"][0]["upload_id"], upload_payload["upload_id"])
+            self.assertEqual(created.status_code, 200)
+            self.assertEqual(calls[0].input_xlsx and Path(calls[0].input_xlsx).suffix.lower(), ".xlsx")
+            self.assertEqual(calls[0].prompt_version, "v2")
+            self.assertEqual(job["status"], "success")
+            self.assertEqual(job["input_mode"], "uploaded-xlsx")
+            self.assertEqual(deleted_after_job.status_code, 409)
+            self.assertTrue(Path(calls[0].input_xlsx).exists())
+
+    def test_uploads_excel_rejects_unrecognizable_workbook(self):
+        from api_server import create_app
+
+        with tempfile.TemporaryDirectory() as tmp:
+            client = TestClient(create_app(record_provider=lambda **_: {"items": [], "total": 0}, output_dir=Path(tmp) / "out", log_dir=Path(tmp) / "logs"))
+
+            response = client.post(
+                "/api/uploads/excel",
+                files={
+                    "file": (
+                        "bad.xlsx",
+                        self._xlsx_bytes(headers=["foo", "bar"], rows=[["x", "y"]]),
+                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    )
+                },
+            )
+
+            self.assertEqual(response.status_code, 400)
+            self.assertEqual(response.json()["error_type"], "ValidationError")
+            self.assertIn("标题", response.text)
+
+    def test_upload_xlsx_rejects_unsafe_extension_and_oversized_body_with_json_errors(self):
+        from api_server import create_app
+
+        with tempfile.TemporaryDirectory() as tmp:
+            output_dir = Path(tmp) / "out"
+            client = TestClient(
+                create_app(
+                    record_provider=lambda **_: {"items": [], "total": 0},
+                    output_dir=output_dir,
+                    log_dir=Path(tmp) / "logs",
+                )
+            )
+
+            bad_extension = client.post(
+                "/api/uploads/excel",
+                files={"file": (r"C:\secret\bad.xls", b"not-xlsx", "application/vnd.ms-excel")},
+            )
+            invalid_workbook = client.post(
+                "/api/uploads/excel",
+                files={
+                    "file": (
+                        "bad.xlsx",
+                        b"not-a-workbook",
+                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    )
+                },
+            )
+            oversized = client.post(
+                "/api/uploads/excel",
+                files={
+                    "file": (
+                        "too-large.xlsx",
+                        b"x" * (21 * 1024 * 1024),
+                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    )
+                },
+            )
+
+            self.assertEqual(bad_extension.headers["content-type"].split(";")[0], "application/json")
+            self.assertEqual(bad_extension.status_code, 400)
+            self.assertEqual(bad_extension.json()["error_type"], "ValidationError")
+            self.assertEqual(invalid_workbook.status_code, 400)
+            self.assertEqual(invalid_workbook.json()["error_type"], "ValidationError")
+            self.assertEqual(oversized.headers["content-type"].split(";")[0], "application/json")
+            self.assertEqual(oversized.status_code, 413)
+            self.assertEqual(oversized.json()["error_type"], "UploadTooLarge")
+            self.assertNotIn(str(output_dir), str(bad_extension.json()))
+            self.assertNotIn(str(output_dir), str(oversized.json()))
+            self.assertNotIn("secret", str(bad_extension.json()).lower())
 
     def test_job_logs_summary_and_job_download_are_safe(self):
         from api_server import create_app

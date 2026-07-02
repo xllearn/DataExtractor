@@ -22,6 +22,9 @@ const elements = {
   promptVersionInput: document.querySelector("#promptVersionInput"),
   externalOcrInput: document.querySelector("#externalOcrInput"),
   extractBtn: document.querySelector("#extractBtn"),
+  uploadXlsxInput: document.querySelector("#uploadXlsxInput"),
+  uploadExtractBtn: document.querySelector("#uploadExtractBtn"),
+  uploadStatusText: document.querySelector("#uploadStatusText"),
   selectionStatus: document.querySelector("#selectionStatus"),
   jobStatus: document.querySelector("#jobStatus"),
   ocrWarning: document.querySelector("#ocrWarning"),
@@ -113,6 +116,10 @@ function getSelectedMode() {
   return elements.modeSingleInput && elements.modeSingleInput.checked ? "single" : "merge";
 }
 
+function hasUploadFile() {
+  return Boolean(elements.uploadXlsxInput && elements.uploadXlsxInput.files && elements.uploadXlsxInput.files.length > 0);
+}
+
 function updateSelection() {
   setText(elements.selectionStatus, `已选择 ${selectedIds.size} 条`);
   elements.clearSelectionBtn.disabled = selectedIds.size === 0;
@@ -123,6 +130,8 @@ function setQueryEnabled(enabled) {
   const canQuery = Boolean(enabled);
   elements.searchBtn.disabled = !canQuery || state.loadingArticles;
   elements.extractBtn.disabled = !canQuery || state.extracting || selectedIds.size === 0;
+  elements.uploadExtractBtn.disabled = state.extracting || !hasUploadFile();
+  elements.uploadXlsxInput.disabled = state.extracting;
   elements.selectPageInput.disabled = !canQuery;
   elements.prevPageBtn.disabled = !canQuery || state.loadingArticles || state.currentPage <= 1;
   elements.nextPageBtn.disabled = !canQuery || state.loadingArticles || state.currentPage >= state.totalPages;
@@ -598,6 +607,66 @@ async function extractExcel() {
   }
 }
 
+async function uploadExtractExcel() {
+  if (state.extracting) return;
+  if (!hasUploadFile()) {
+    setStatus("请先选择 .xlsx 文件", true);
+    return;
+  }
+
+  state.extracting = true;
+  setQueryEnabled(state.safeToQuery);
+  setText(elements.uploadStatusText, "正在上传...");
+  setStatus("正在上传 Excel 并创建任务...");
+  renderSummaryMessage("等待上传任务生成 summary");
+  renderLogLines(["等待上传任务启动..."]);
+  try {
+    const formData = new FormData();
+    formData.append("file", elements.uploadXlsxInput.files[0]);
+
+    const upload = await fetchJson("/api/uploads/excel", {
+      method: "POST",
+      body: formData,
+    });
+    const payload = await fetchJson("/api/extract/uploaded", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({
+        upload_id: upload.upload_id,
+        mode: getSelectedMode(),
+        no_ocr: elements.noOcrInput.checked,
+        no_llm: elements.noLlmInput.checked,
+        prompt_version: elements.promptVersionInput.value.trim(),
+        external_ocr_text: elements.externalOcrInput.value.trim(),
+      }),
+    });
+    if (!payload.job_id || !String(payload.job_id).startsWith("job_")) {
+      throw new Error("后端返回的任务编号格式不正确，请刷新页面后重试");
+    }
+    if (payload.result_page) {
+      state.currentResultPage = payload.result_page;
+    } else {
+      state.currentResultPage = `/web/result.html?job_id=${encodeURIComponent(payload.job_id)}`;
+    }
+    renderCurrentJob({
+      job_id: payload.job_id,
+      status: payload.status || "queued",
+      progress_current: 0,
+      progress_total: 0,
+      current_title: "",
+    });
+    setText(elements.uploadStatusText, "任务已创建");
+    setStatus("上传任务已创建，首页会持续刷新进度");
+    await loadJobHistory();
+    startJobPolling(payload.job_id);
+  } catch (error) {
+    setText(elements.uploadStatusText, "上传失败");
+    setStatus(error.message, true);
+    state.extracting = false;
+    setQueryEnabled(state.safeToQuery);
+  }
+}
+
 elements.articleBody.addEventListener("change", (event) => {
   const id = event.target.dataset.id;
   if (!id) return;
@@ -665,6 +734,12 @@ elements.pageSizeSelect.addEventListener("change", () => {
 });
 
 elements.extractBtn.addEventListener("click", () => extractExcel());
+elements.uploadExtractBtn.addEventListener("click", () => uploadExtractExcel());
+elements.uploadXlsxInput.addEventListener("change", () => {
+  const file = hasUploadFile() ? elements.uploadXlsxInput.files[0] : null;
+  setText(elements.uploadStatusText, file ? file.name : "仅支持 .xlsx");
+  setQueryEnabled(state.safeToQuery);
+});
 elements.jobRefreshBtn.addEventListener("click", () => {
   if (state.currentJobId) pollCurrentJob();
 });

@@ -127,6 +127,42 @@ class WebAppStaticTests(unittest.TestCase):
         self.assertIn("prompt_version: elements.promptVersionInput.value.trim()", source)
         self.assertNotIn("window.location.href = payload.result_page", source)
 
+    def test_index_and_app_js_expose_uploaded_xlsx_job_flow(self):
+        index_source = read_web_file("index.html")
+        app_source = read_web_file("app.js")
+        style_source = read_web_file("style.css")
+
+        for marker in [
+            'id="uploadXlsxInput"',
+            'id="uploadExtractBtn"',
+            'accept=".xlsx"',
+            'class="upload-panel"',
+        ]:
+            self.assertIn(marker, index_source)
+
+        for marker in [
+            "uploadXlsxInput: document.querySelector",
+            "uploadExtractBtn: document.querySelector",
+            "function hasUploadFile",
+            "async function uploadExtractExcel",
+            "new FormData()",
+            'formData.append("file", elements.uploadXlsxInput.files[0])',
+            'fetchJson("/api/uploads/excel"',
+            'fetchJson("/api/extract/uploaded"',
+            "upload_id: upload.upload_id",
+            "startJobPolling(payload.job_id)",
+            "elements.uploadExtractBtn.disabled = state.extracting || !hasUploadFile()",
+            'elements.uploadXlsxInput.addEventListener("change"',
+        ]:
+            self.assertIn(marker, app_source)
+
+        for marker in [
+            ".upload-panel",
+            ".upload-actions",
+            ".file-input-row",
+        ]:
+            self.assertIn(marker, style_source)
+
     def test_result_page_contains_task3_job_panels(self):
         result_html_source = read_web_file("result.html")
 

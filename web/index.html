@@ -73,6 +73,17 @@
           </label>
         </div>
 
+        <div class="upload-panel" aria-label="Excel 上传抽取">
+          <label class="file-input-row" for="uploadXlsxInput">
+            <span>上传 Excel</span>
+            <input id="uploadXlsxInput" type="file" accept=".xlsx" />
+          </label>
+          <div class="upload-actions">
+            <button id="uploadExtractBtn" type="button" disabled>上传并抽取</button>
+            <span id="uploadStatusText" class="summary-hint">仅支持 .xlsx</span>
+          </div>
+        </div>
+
         <details class="ocr-panel">
           <summary>
             <span>外部 OCR 文本</span>

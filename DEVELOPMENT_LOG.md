@@ -696,3 +696,13 @@ Continue optimization on `codex/db-to-excel-extractor`: start the project first,
 - Result page now shows progress/current title, live logs, summary, cancel, job-level download, and the existing workbook preview.
 - Red TDD check: `py -m pytest tests/test_web_app_static.py -q` failed as expected with 6 failures for missing task 3 workbench DOM, job polling/action endpoints, result job panels, version bump, and workbench CSS classes.
 - Verification: `py -m pytest tests/test_web_app_static.py tests/test_api_server.py tests/test_extraction_service.py -q` passed, output `................................. [100%]` with the existing FastAPI/Starlette deprecation warning.
+
+## 2026-07-02 Phase 3 Task 4
+
+- Added uploaded Excel extraction support through `POST /api/uploads/excel`, `POST /api/extract/uploaded`, `GET /api/uploads`, and `DELETE /api/uploads/{upload_id}`; retained `POST /api/extract/upload` as a compatibility shortcut.
+- Upload handling validates multipart requests and workbook headers, only accepts `.xlsx`, enforces a 20MB limit, stores files under `output_root/uploads/<upload_id>/<upload_id>.xlsx`, and returns masked JSON `ApiError` responses without absolute path leakage.
+- Uploaded jobs use `ExtractionService(input_xlsx=...)` with `input_mode="uploaded-xlsx"` and reuse the existing job status, logs, summary, preview, download, and cancel APIs.
+- `read_records_from_xlsx()` now supports reading all rows when no limit is provided; uploaded service jobs no longer default to one row.
+- Added workbench upload controls for `.xlsx` files. The UI uploads first, starts the uploaded job with `upload_id`, stays on the homepage, starts current-job polling, and refreshes history without adding a frontend framework or unsafe DOM writes.
+- Red TDD check: `py -m pytest tests/test_extraction_service.py::test_extraction_service_reads_uploaded_xlsx_records_with_uploaded_input_mode tests/test_api_server.py::ApiServerTests::test_upload_xlsx_creates_uploaded_job_through_service_and_job_endpoints tests/test_api_server.py::ApiServerTests::test_upload_xlsx_rejects_unsafe_extension_and_oversized_body_with_json_errors tests/test_web_app_static.py::WebAppStaticTests::test_index_and_app_js_expose_uploaded_xlsx_job_flow -q` failed as expected with 4 failures for old `input-xlsx`/single-row behavior, missing upload API, missing upload validation, and missing frontend upload UI.
+- Verification: `py -m pytest tests/test_api_server.py tests/test_extraction_service.py tests/test_web_app_static.py -q` passed, output `....................................... [100%]` with the existing FastAPI/Starlette deprecation warning.

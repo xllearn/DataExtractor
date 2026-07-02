@@ -6,8 +6,11 @@ import sys
 import time
 import uuid
 import inspect
+import shutil
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
+from email import policy
+from email.parser import BytesParser
 from pathlib import Path
 from threading import Lock
 from typing import Any, Callable, List, Optional
@@ -33,6 +36,7 @@ from utils import ensure_dir
 
 
 MAX_SELECTED = 50
+MAX_UPLOAD_BYTES = 20 * 1024 * 1024
 WEB_APP_VERSION = "20260701_image_table"
 LOGGER = logging.getLogger(__name__)
 SENSITIVE_NAME_RE = re.compile(r"\b(DATABASE_URL|DB_PASSWORD|LLM_API_KEY|Authorization|api_key|password|token|secret)\b", re.IGNORECASE)
@@ -45,6 +49,15 @@ WINDOWS_ABS_PATH_RE = re.compile(r"[A-Za-z]:\\.*?(?=\s+(?:and|or)\s+|[,;\"'\]}]|
 
 class ExtractRequest(BaseModel):
     selected_ids: List[str]
+    mode: str = "merge"
+    no_ocr: bool = True
+    no_llm: bool = False
+    external_ocr_text: str = ""
+    prompt_version: str = "v3"
+
+
+class UploadedExtractRequest(BaseModel):
+    upload_id: str
     mode: str = "merge"
     no_ocr: bool = True
     no_llm: bool = False
@@ -274,6 +287,170 @@ def _pagination_payload(items: list, total: int, limit: int, offset: int) -> dic
     }
 
 
+def _parse_bool_form(value: object, default: bool = False) -> bool:
+    if value is None:
+        return default
+    normalized = str(value).strip().lower()
+    if not normalized:
+        return default
+    return normalized in {"1", "true", "yes", "on"}
+
+
+def _parse_multipart_upload(content_type: str, body: bytes) -> tuple[dict[str, str], str, bytes]:
+    if "multipart/form-data" not in content_type.lower():
+        raise ApiError(400, "上传请求必须使用 multipart/form-data", "ValidationError")
+    message = BytesParser(policy=policy.default).parsebytes(
+        f"Content-Type: {content_type}\r\nMIME-Version: 1.0\r\n\r\n".encode("utf-8") + body
+    )
+    if not message.is_multipart():
+        raise ApiError(400, "上传表单格式不正确", "ValidationError")
+
+    fields: dict[str, str] = {}
+    filename = ""
+    file_bytes = b""
+    for part in message.iter_parts():
+        disposition = str(part.get("content-disposition") or "")
+        if "form-data" not in disposition:
+            continue
+        name = str(part.get_param("name", header="content-disposition") or "")
+        payload = part.get_payload(decode=True) or b""
+        part_filename = str(part.get_filename() or "")
+        if name == "file" and part_filename:
+            filename = part_filename
+            file_bytes = payload
+            continue
+        if name:
+            charset = part.get_content_charset() or "utf-8"
+            fields[name] = payload.decode(charset, errors="replace")
+
+    if not filename:
+        raise ApiError(400, "缺少上传 Excel 文件", "ValidationError")
+    if not file_bytes:
+        raise ApiError(400, "上传 Excel 文件不能为空", "ValidationError")
+    return fields, filename, file_bytes
+
+
+def _new_upload_id() -> str:
+    return f"upload_{datetime.now():%Y%m%d_%H%M%S}_{uuid.uuid4().hex[:8]}"
+
+
+def _uploads_root(output_root: Path) -> Path:
+    return (output_root / "uploads").resolve()
+
+
+def _upload_metadata_path(output_root: Path, upload_id: str) -> Path:
+    if not re.fullmatch(r"upload_\d{8}_\d{6}_[0-9a-f]{8}", str(upload_id or "")):
+        raise ApiError(400, "upload_id 不合法", "ValidationError")
+    root = _uploads_root(output_root)
+    path = (root / upload_id / "upload.json").resolve()
+    if not _is_relative_to(path, root):
+        raise ApiError(400, "upload_id 不合法", "ValidationError")
+    return path
+
+
+def _public_upload_payload(payload: dict) -> dict:
+    return {
+        "upload_id": str(payload.get("upload_id") or ""),
+        "file_name": str(payload.get("file_name") or ""),
+        "size": int(payload.get("size") or 0),
+        "created_at": str(payload.get("created_at") or ""),
+        "used_by_job_id": str(payload.get("used_by_job_id") or ""),
+    }
+
+
+def _read_upload_metadata(output_root: Path, upload_id: str) -> dict:
+    path = _upload_metadata_path(output_root, upload_id)
+    if not path.exists():
+        raise ApiError(404, "upload 不存在", "UploadNotFound")
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        raise ApiError(500, f"upload metadata 读取失败: {exc}", "UploadReadError") from exc
+    if not isinstance(payload, dict) or payload.get("upload_id") != upload_id:
+        raise ApiError(500, "upload metadata 不合法", "UploadReadError")
+    return payload
+
+
+def _write_upload_metadata(output_root: Path, payload: dict) -> dict:
+    path = _upload_metadata_path(output_root, str(payload.get("upload_id") or ""))
+    ensure_dir(path.parent)
+    public = _public_upload_payload(payload)
+    internal = dict(public)
+    internal["path"] = str(payload.get("path") or "")
+    temp_path = path.with_suffix(".json.tmp")
+    temp_path.write_text(json.dumps(internal, ensure_ascii=False, indent=2, default=str) + "\n", encoding="utf-8")
+    temp_path.replace(path)
+    return public
+
+
+def _uploaded_xlsx_path_from_metadata(output_root: Path, upload_id: str) -> Path:
+    payload = _read_upload_metadata(output_root, upload_id)
+    path = Path(str(payload.get("path") or "")).resolve()
+    root = _uploads_root(output_root)
+    if not _is_relative_to(path, root) or path.suffix.lower() != ".xlsx" or not path.exists():
+        raise ApiError(404, "upload 文件不存在", "UploadNotFound")
+    return path
+
+
+def _validate_uploaded_workbook(path: Path) -> None:
+    title_headers = {"title", "标题"}
+    content_headers = {"content", "context", "正文", "内容", "html"}
+    try:
+        workbook = load_workbook(path, read_only=True, data_only=True)
+    except Exception as exc:
+        raise ApiError(400, "上传文件不是有效的 .xlsx workbook", "ValidationError") from exc
+    try:
+        for worksheet in workbook.worksheets:
+            rows = worksheet.iter_rows(values_only=True)
+            try:
+                header_row = next(rows)
+            except StopIteration:
+                continue
+            headers = {str(value or "").strip().lower() for value in header_row if str(value or "").strip()}
+            if headers & title_headers and headers & content_headers:
+                return
+        raise ApiError(400, "上传 Excel 至少需要可识别的标题列和正文列", "ValidationError")
+    finally:
+        workbook.close()
+
+
+def _store_uploaded_xlsx(output_root: Path, upload_id: str, filename: str, file_bytes: bytes) -> dict:
+    suffix = Path(str(filename).replace("\\", "/")).suffix.lower()
+    if suffix != ".xlsx":
+        raise ApiError(400, "只允许上传 .xlsx 文件", "ValidationError")
+    if len(file_bytes) > MAX_UPLOAD_BYTES:
+        raise ApiError(413, f"上传文件超过 {MAX_UPLOAD_BYTES // (1024 * 1024)}MB 限制", "UploadTooLarge")
+
+    upload_root = _uploads_root(output_root)
+    target_dir = (upload_root / upload_id).resolve()
+    if not _is_relative_to(target_dir, upload_root):
+        raise ApiError(400, "上传路径不合法", "ValidationError")
+    ensure_dir(target_dir)
+    target = (target_dir / f"{upload_id}.xlsx").resolve()
+    if target.parent != target_dir:
+        raise ApiError(400, "上传路径不合法", "ValidationError")
+    target.write_bytes(file_bytes)
+    try:
+        _validate_uploaded_workbook(target)
+    except Exception:
+        try:
+            target.unlink()
+        except OSError:
+            pass
+        raise
+    return _write_upload_metadata(
+        output_root,
+        {
+            "upload_id": upload_id,
+            "file_name": f"{upload_id}.xlsx",
+            "size": len(file_bytes),
+            "created_at": _now_iso(),
+            "used_by_job_id": "",
+            "path": str(target),
+        },
+    )
+
+
 def _call_runner(
     runner: Callable,
     selected: List[str],
@@ -487,6 +664,16 @@ def create_app(
             llm_config_path=llm_config_path,
         )
     requires_database_for_extract = record_provider is None and extract_runner is None and extraction_service is None
+    upload_service = service
+    if upload_service is None:
+        upload_service = ExtractionService(
+            output_dir=output_root,
+            log_dir=log_root,
+            record_provider=provider,
+            config_path=config_path,
+            field_config_path=field_config_path,
+            llm_config_path=llm_config_path,
+        )
     job_store = JobStore(output_root)
     executor = ThreadPoolExecutor(max_workers=2)
     jobs: dict[str, dict] = {}
@@ -732,6 +919,220 @@ def create_app(
             "status_url": f"/api/jobs/{job_id}",
             "result_page": f"/web/result.html?job_id={job_id}",
         }
+
+    async def parse_upload_request(request: Request) -> tuple[dict[str, str], str, bytes]:
+        try:
+            content_length = int(request.headers.get("content-length") or "0")
+        except ValueError:
+            content_length = 0
+        if content_length > MAX_UPLOAD_BYTES:
+            raise ApiError(413, f"upload exceeds {MAX_UPLOAD_BYTES // (1024 * 1024)}MB limit", "UploadTooLarge")
+
+        body = await request.body()
+        if len(body) > MAX_UPLOAD_BYTES:
+            raise ApiError(413, f"upload exceeds {MAX_UPLOAD_BYTES // (1024 * 1024)}MB limit", "UploadTooLarge")
+
+        return _parse_multipart_upload(str(request.headers.get("content-type") or ""), body)
+
+    def create_upload(filename: str, file_bytes: bytes) -> dict:
+        upload_id = _new_upload_id()
+        return _store_uploaded_xlsx(output_root, upload_id, filename, file_bytes)
+
+    def mark_upload_used(upload_id: str, job_id: str) -> None:
+        payload = _read_upload_metadata(output_root, upload_id)
+        payload["used_by_job_id"] = job_id
+        _write_upload_metadata(output_root, payload)
+
+    def start_uploaded_job(upload_id: str, request_data: UploadedExtractRequest) -> dict:
+        upload_path = _uploaded_xlsx_path_from_metadata(output_root, upload_id)
+        mode = str(request_data.mode or "merge")
+        if mode not in {"single", "merge"}:
+            raise ApiError(400, "mode must be single or merge", "ValidationError")
+        job_id = _new_job_id()
+        mark_upload_used(upload_id, job_id)
+        selected: List[str] = []
+
+        now = _now_iso()
+        with jobs_lock:
+            jobs[job_id] = job_store.create(
+                job_id=job_id,
+                status="queued",
+                message="queued",
+                selected_ids=selected,
+                input_mode="uploaded-xlsx",
+                progress_current=0,
+                progress_total=0,
+                ocr_available=get_ocr_status().get("available"),
+                external_ocr_used=bool(request_data.external_ocr_text.strip()),
+                created_at=now,
+                updated_at=now,
+            )
+
+        def run_upload_job() -> None:
+            with jobs_lock:
+                if job_id in cancelled_jobs:
+                    jobs[job_id] = job_store.update(
+                        job_id,
+                        status="cancelled",
+                        message="cancelled",
+                        selected_ids=selected,
+                        finished_at=_now_iso(),
+                        updated_at=_now_iso(),
+                    )
+                    return
+                started_at = _now_iso()
+                jobs[job_id] = job_store.update(
+                    job_id,
+                    status="running",
+                    message="running",
+                    started_at=started_at,
+                    updated_at=started_at,
+                )
+            try:
+                service_request = ServiceExtractionRequest(
+                    selected_ids=selected,
+                    mode=mode,
+                    no_ocr=request_data.no_ocr,
+                    no_llm=request_data.no_llm,
+                    external_ocr_text=request_data.external_ocr_text,
+                    prompt_version=request_data.prompt_version,
+                    input_xlsx=str(upload_path),
+                    job_id=job_id,
+                )
+
+                def progress_callback(payload: dict) -> None:
+                    with jobs_lock:
+                        if job_id in cancelled_jobs:
+                            return
+                        jobs[job_id] = job_store.update(job_id, status="running", message="running", **payload)
+
+                def cancel_checker() -> bool:
+                    return job_id in cancelled_jobs
+
+                service_result = _call_service(upload_service, service_request, progress_callback, cancel_checker)
+                output_path = service_result.output_excel_path
+                file_id = output_path.name
+                with jobs_lock:
+                    if job_id in cancelled_jobs:
+                        jobs[job_id] = job_store.update(
+                            job_id,
+                            status="cancelled",
+                            message="cancelled",
+                            selected_ids=selected,
+                            finished_at=_now_iso(),
+                            updated_at=_now_iso(),
+                        )
+                        return
+                    jobs[job_id] = job_store.update(
+                        job_id,
+                        status="success",
+                        message="done",
+                        file_id=file_id,
+                        download_url=f"/api/download/{quote(file_id, safe='')}",
+                        preview_url=f"/api/jobs/{job_id}/preview",
+                        output_excel_path=output_path,
+                        run_id=service_result.run_id,
+                        input_mode=service_result.input_mode or "uploaded-xlsx",
+                        selected_ids=service_result.selected_ids,
+                        keyword=service_result.keyword,
+                        progress_current=service_result.total_records,
+                        progress_total=service_result.total_records,
+                        summary_path=service_result.summary_path,
+                        log_dir=service_result.log_dir,
+                        finished_at=_now_iso(),
+                        updated_at=_now_iso(),
+                    )
+            except ExtractionCancelled:
+                with jobs_lock:
+                    cancelled_jobs.add(job_id)
+                    jobs[job_id] = job_store.update(
+                        job_id,
+                        status="cancelled",
+                        message="cancelled",
+                        selected_ids=selected,
+                        finished_at=_now_iso(),
+                        updated_at=_now_iso(),
+                    )
+            except Exception as exc:
+                with jobs_lock:
+                    if job_id in cancelled_jobs:
+                        jobs[job_id] = job_store.update(
+                            job_id,
+                            status="cancelled",
+                            message="cancelled",
+                            selected_ids=selected,
+                            finished_at=_now_iso(),
+                            updated_at=_now_iso(),
+                        )
+                        return
+                    jobs[job_id] = job_store.update(
+                        job_id,
+                        status="failed",
+                        message="failed",
+                        selected_ids=selected,
+                        error=mask_sensitive_text(str(exc)),
+                        finished_at=_now_iso(),
+                        updated_at=_now_iso(),
+                    )
+
+        executor.submit(run_upload_job)
+        return {
+            "job_id": job_id,
+            "status": "queued",
+            "status_url": f"/api/jobs/{job_id}",
+            "result_page": f"/web/result.html?job_id={job_id}",
+        }
+
+    @app.post("/api/uploads/excel")
+    async def upload_excel(request: Request):
+        _fields, filename, file_bytes = await parse_upload_request(request)
+        return create_upload(filename, file_bytes)
+
+    @app.get("/api/uploads")
+    def upload_list(limit: int = Query(default=20, ge=1, le=100)):
+        root = _uploads_root(output_root)
+        ensure_dir(root)
+        items: list[dict] = []
+        for path in root.glob("upload_*/upload.json"):
+            try:
+                payload = json.loads(path.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            if isinstance(payload, dict):
+                items.append(_public_upload_payload(payload))
+        items.sort(key=lambda item: str(item.get("created_at") or ""), reverse=True)
+        return {"items": items[:limit], "total": len(items), "limit": limit}
+
+    @app.delete("/api/uploads/{upload_id}")
+    def upload_delete(upload_id: str):
+        payload = _read_upload_metadata(output_root, upload_id)
+        if payload.get("used_by_job_id"):
+            raise ApiError(409, "upload 已被任务使用，不能删除", "UploadInUse")
+        path = _upload_metadata_path(output_root, upload_id)
+        directory = path.parent.resolve()
+        root = _uploads_root(output_root)
+        if not _is_relative_to(directory, root):
+            raise ApiError(400, "upload_id 不合法", "ValidationError")
+        shutil.rmtree(directory)
+        return {"upload_id": upload_id, "deleted": True}
+
+    @app.post("/api/extract/uploaded")
+    def extract_uploaded(request: UploadedExtractRequest):
+        return start_uploaded_job(request.upload_id, request)
+
+    @app.post("/api/extract/upload")
+    async def upload_extract(request: Request):
+        fields, filename, file_bytes = await parse_upload_request(request)
+        upload = create_upload(filename, file_bytes)
+        request_data = UploadedExtractRequest(
+            upload_id=upload["upload_id"],
+            mode=str(fields.get("mode") or "merge"),
+            no_ocr=_parse_bool_form(fields.get("no_ocr"), True),
+            no_llm=_parse_bool_form(fields.get("no_llm"), False),
+            external_ocr_text=str(fields.get("external_ocr_text") or ""),
+            prompt_version=str(fields.get("prompt_version") or "v3"),
+        )
+        return start_uploaded_job(request_data.upload_id, request_data)
 
     @app.get("/api/jobs")
     def job_list(limit: int = Query(default=20, ge=1, le=100)):

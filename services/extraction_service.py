@@ -265,8 +265,7 @@ class ExtractionService:
 
     def _read_records(self, request: ExtractionRequest, selected_ids: List[str]) -> tuple[str, List[Dict[str, Any]]]:
         if request.input_xlsx:
-            limit = request.limit if request.limit is not None else max(len(selected_ids), 1)
-            return "input-xlsx", read_records_from_xlsx(Path(request.input_xlsx), limit=limit, offset=request.offset)
+            return "uploaded-xlsx", read_records_from_xlsx(Path(request.input_xlsx), limit=request.limit, offset=request.offset)
         limit = request.limit if request.limit is not None else max(len(selected_ids), 1)
         result = self.record_provider(keyword=request.keyword, selected_ids=selected_ids, limit=limit, offset=request.offset)
         if isinstance(result, dict):

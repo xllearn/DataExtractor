@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from openpyxl import load_workbook
 
@@ -14,7 +14,7 @@ def _row_is_empty(values: List[Any]) -> bool:
     return all(value is None or str(value).strip() == "" for value in values)
 
 
-def read_records_from_xlsx(path: Path, limit: int = 1, offset: int = 0) -> List[Dict[str, Any]]:
+def read_records_from_xlsx(path: Path, limit: Optional[int] = None, offset: int = 0) -> List[Dict[str, Any]]:
     workbook = load_workbook(path, read_only=True, data_only=True)
     records: List[Dict[str, Any]] = []
 
@@ -37,7 +37,7 @@ def read_records_from_xlsx(path: Path, limit: int = 1, offset: int = 0) -> List[
                 if data_index < offset:
                     data_index += 1
                     continue
-                if len(records) >= limit:
+                if limit is not None and len(records) >= limit:
                     return records
 
                 record = {header: values[index] if index < len(values) else None for index, header in enumerate(headers) if header}

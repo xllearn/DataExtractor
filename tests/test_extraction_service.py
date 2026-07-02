@@ -110,6 +110,62 @@ def test_extraction_service_runs_selected_ids_without_subprocess_or_real_depende
         assert summary["output_rows"] == 1
 
 
+def test_extraction_service_reads_uploaded_xlsx_records_with_uploaded_input_mode():
+    from field_mapping import FieldMapping
+    from openpyxl import Workbook
+    from services.extraction_service import ExtractionRequest, ExtractionService
+
+    provider_calls = []
+    pipeline_calls = []
+
+    def provider(**kwargs):
+        provider_calls.append(kwargs)
+        return {"items": [], "total": 0}
+
+    def pipeline(**kwargs):
+        pipeline_calls.append(kwargs)
+        record = kwargs["record"]
+        kwargs["metadata"]["collection_logs"].append({"source_id": record["_source_id"], "status": "success"})
+        return [{"info_id": record["info_id"], "title": record["Title"]}]
+
+    with tempfile.TemporaryDirectory() as tmp:
+        source_xlsx = Path(tmp) / "uploaded.xlsx"
+        workbook = Workbook()
+        sheet = workbook.active
+        sheet.append(["_source_id", "info_id", "Title", "SourceURL", "Content"])
+        sheet.append(["UP-1", "INFO-UP-1", "Uploaded one", "https://example.test/up/1", "content one"])
+        sheet.append(["UP-2", "INFO-UP-2", "Uploaded two", "https://example.test/up/2", "content two"])
+        workbook.save(source_xlsx)
+        workbook.close()
+
+        service = ExtractionService(
+            output_dir=Path(tmp) / "outputs",
+            log_dir=Path(tmp) / "logs",
+            record_provider=provider,
+            pipeline=pipeline,
+            workbook_writer=CapturingWriter(),
+            field_mapping=FieldMapping(),
+        )
+
+        result = service.run(
+            ExtractionRequest(
+                input_xlsx=str(source_xlsx),
+                selected_ids=[],
+                mode="merge",
+                no_ocr=True,
+                no_llm=True,
+                job_id="job_upload_test",
+            )
+        )
+
+        assert provider_calls == []
+        assert result.input_mode == "uploaded-xlsx"
+        assert result.total_records == 2
+        assert [call["record"]["info_id"] for call in pipeline_calls] == ["INFO-UP-1", "INFO-UP-2"]
+        assert all(call["input_mode"] == "uploaded-xlsx" for call in pipeline_calls)
+        assert result.output_excel_path.exists()
+
+
 def test_extraction_service_records_per_record_failures_in_summary_and_workbook_metadata():
     from field_mapping import FieldMapping
     from services.extraction_service import ExtractionRequest, ExtractionService
