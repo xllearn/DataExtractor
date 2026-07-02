@@ -1,6 +1,4 @@
-import json
 import logging
-import re
 import subprocess
 import sys
 import time
@@ -9,7 +7,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
 from threading import Lock
-from typing import Callable, List, Optional
+from typing import Any, Callable, List, Optional
 from urllib.parse import quote
 
 from fastapi import FastAPI, HTTPException, Query, Request
@@ -24,11 +22,13 @@ from db_reader import count_configured_records, fetch_configured_records
 from image_ocr import get_ocr_status
 from keyword_utils import expand_keyword_groups
 from security_utils import mask_sensitive_text
+from services.extraction_service import ExtractionRequest as ServiceExtractionRequest
+from services.extraction_service import ExtractionService
+from services.job_store import JobStore, JobStoreError
 from utils import ensure_dir
 
 
 MAX_SELECTED = 50
-JOB_ID_RE = re.compile(r"^job_[A-Za-z0-9_-]+$")
 WEB_APP_VERSION = "20260701_image_table"
 LOGGER = logging.getLogger(__name__)
 
@@ -141,53 +141,6 @@ def _new_job_id() -> str:
 
 def _job_not_found() -> ApiError:
     return ApiError(404, "任务不存在或已过期，请返回列表重新生成。", "JobNotFound")
-
-
-def _job_metadata_path(output_dir: Path, job_id: str) -> Path:
-    if not JOB_ID_RE.fullmatch(job_id or ""):
-        raise _job_not_found()
-    return output_dir / "jobs" / f"{job_id}.json"
-
-
-def _public_job_payload(job: dict) -> dict:
-    file_id = str(job.get("file_id") or "")
-    job_id = str(job.get("job_id") or "")
-    payload = {
-        "job_id": job_id,
-        "status": str(job.get("status") or ""),
-        "message": str(job.get("message") or ""),
-        "file_id": file_id,
-        "download_url": str(job.get("download_url") or (f"/api/download/{quote(file_id, safe='')}" if file_id else "")),
-        "preview_url": str(job.get("preview_url") or (f"/api/jobs/{job_id}/preview" if job_id else "")),
-        "error": mask_sensitive_text(str(job.get("error") or "")),
-        "ocr_available": bool(job.get("ocr_available")),
-        "external_ocr_used": bool(job.get("external_ocr_used")),
-        "created_at": str(job.get("created_at") or ""),
-        "updated_at": str(job.get("updated_at") or ""),
-    }
-    return payload
-
-
-def _write_job_metadata(output_dir: Path, job: dict) -> None:
-    path = _job_metadata_path(output_dir, str(job.get("job_id") or ""))
-    ensure_dir(path.parent)
-    payload = _public_job_payload(job)
-    temp_path = path.with_suffix(".json.tmp")
-    temp_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    temp_path.replace(path)
-
-
-def _read_job_metadata(output_dir: Path, job_id: str) -> dict:
-    path = _job_metadata_path(output_dir, job_id)
-    if not path.exists():
-        return {}
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except Exception as exc:
-        raise ApiError(500, f"job metadata 读取失败: {exc}", "JobMetadataReadError") from exc
-    if not isinstance(payload, dict) or payload.get("job_id") != job_id:
-        raise ApiError(500, "job metadata 格式无效", "JobMetadataInvalid")
-    return payload
 
 
 def _default_record_provider(config_path: str):
@@ -329,6 +282,8 @@ def create_app(
     log_dir: str | Path = "logs/web",
     record_provider: Optional[Callable[..., list]] = None,
     extract_runner: Optional[Callable[[List[str], str, bool, bool], Path]] = None,
+    extraction_service: Optional[Any] = None,
+    use_subprocess_runner: bool = False,
 ) -> FastAPI:
     output_root = Path(output_dir)
     if not output_root.is_absolute():
@@ -337,9 +292,24 @@ def create_app(
     if not log_root.is_absolute():
         log_root = PROJECT_ROOT / log_root
     uses_default_provider = record_provider is None
-    uses_default_runner = extract_runner is None
     provider = record_provider or _default_record_provider(config_path)
-    runner = extract_runner or _default_extract_runner(config_path, field_config_path, llm_config_path, output_root, log_root)
+    runner = extract_runner or (
+        _default_extract_runner(config_path, field_config_path, llm_config_path, output_root, log_root)
+        if use_subprocess_runner
+        else None
+    )
+    service = extraction_service
+    if service is None and runner is None:
+        service = ExtractionService(
+            output_dir=output_root,
+            log_dir=log_root,
+            record_provider=provider,
+            config_path=config_path,
+            field_config_path=field_config_path,
+            llm_config_path=llm_config_path,
+        )
+    requires_database_for_extract = record_provider is None and extract_runner is None and extraction_service is None
+    job_store = JobStore(output_root)
     executor = ThreadPoolExecutor(max_workers=2)
     jobs: dict[str, dict] = {}
     jobs_lock = Lock()
@@ -424,60 +394,98 @@ def create_app(
             raise ApiError(400, f"selected_ids 单次最多 {MAX_SELECTED} 条", "ValidationError")
         if request.mode not in {"single", "merge"}:
             raise ApiError(400, "mode 只能是 single 或 merge", "ValidationError")
-        if uses_default_runner:
+        if requires_database_for_extract:
             _ensure_database_ready(config_path)
         now = _now_iso()
         job_id = _new_job_id()
         with jobs_lock:
-            jobs[job_id] = {
-                "job_id": job_id,
-                "status": "queued",
-                "message": "任务已排队",
-                "file_id": "",
-                "download_url": "",
-                "preview_url": "",
-                "error": "",
-                "output_path": None,
-                "ocr_available": get_ocr_status().get("available"),
-                "external_ocr_used": bool(request.external_ocr_text.strip()),
-                "created_at": now,
-                "updated_at": now,
-            }
-            _write_job_metadata(output_root, jobs[job_id])
+            jobs[job_id] = job_store.create(
+                job_id=job_id,
+                status="queued",
+                message="queued",
+                selected_ids=selected,
+                input_mode="configured-db",
+                progress_current=0,
+                progress_total=len(selected),
+                ocr_available=get_ocr_status().get("available"),
+                external_ocr_used=bool(request.external_ocr_text.strip()),
+                created_at=now,
+                updated_at=now,
+            )
 
         def run_job() -> None:
             with jobs_lock:
-                jobs[job_id]["status"] = "running"
-                jobs[job_id]["message"] = "生成中"
-                jobs[job_id]["updated_at"] = _now_iso()
-                _write_job_metadata(output_root, jobs[job_id])
+                started_at = _now_iso()
+                jobs[job_id] = job_store.update(
+                    job_id,
+                    status="running",
+                    message="running",
+                    started_at=started_at,
+                    updated_at=started_at,
+                )
             try:
-                output_path = _call_runner(runner, selected, request.mode, request.no_ocr, request.no_llm, request.external_ocr_text)
+                service_result = None
+                if runner is not None:
+                    output_path = _call_runner(runner, selected, request.mode, request.no_ocr, request.no_llm, request.external_ocr_text)
+                else:
+                    service_result = service.run(
+                        ServiceExtractionRequest(
+                            selected_ids=selected,
+                            mode=request.mode,
+                            no_ocr=request.no_ocr,
+                            no_llm=request.no_llm,
+                            external_ocr_text=request.external_ocr_text,
+                            job_id=job_id,
+                        )
+                    )
+                    output_path = service_result.output_excel_path
                 file_id = output_path.name
                 with jobs_lock:
-                    jobs[job_id].update(
-                        {
-                            "status": "success",
-                            "message": "生成成功",
-                            "file_id": file_id,
-                            "download_url": f"/api/download/{quote(file_id, safe='')}",
-                            "preview_url": f"/api/jobs/{job_id}/preview",
-                            "output_path": output_path,
-                            "updated_at": _now_iso(),
-                        }
+                    update_fields = {
+                        "run_id": "",
+                        "input_mode": "configured-db",
+                        "selected_ids": selected,
+                        "progress_current": len(selected),
+                        "progress_total": len(selected),
+                        "summary_path": "",
+                        "log_dir": log_root,
+                    }
+                    if service_result is not None:
+                        update_fields.update(
+                            {
+                                "run_id": service_result.run_id,
+                                "input_mode": service_result.input_mode,
+                                "selected_ids": service_result.selected_ids,
+                                "keyword": service_result.keyword,
+                                "progress_current": service_result.total_records,
+                                "progress_total": service_result.total_records,
+                                "summary_path": service_result.summary_path,
+                                "log_dir": service_result.log_dir,
+                            }
+                        )
+                    jobs[job_id] = job_store.update(
+                        job_id,
+                        status="success",
+                        message="done",
+                        file_id=file_id,
+                        download_url=f"/api/download/{quote(file_id, safe='')}",
+                        preview_url=f"/api/jobs/{job_id}/preview",
+                        output_excel_path=output_path,
+                        finished_at=_now_iso(),
+                        updated_at=_now_iso(),
+                        **update_fields,
                     )
-                    _write_job_metadata(output_root, jobs[job_id])
             except Exception as exc:
                 with jobs_lock:
-                    jobs[job_id].update(
-                        {
-                            "status": "failed",
-                            "message": "生成失败",
-                            "error": mask_sensitive_text(str(exc)),
-                            "updated_at": _now_iso(),
-                        }
+                    jobs[job_id] = job_store.update(
+                        job_id,
+                        status="failed",
+                        message="failed",
+                        selected_ids=selected,
+                        error=mask_sensitive_text(str(exc)),
+                        finished_at=_now_iso(),
+                        updated_at=_now_iso(),
                     )
-                    _write_job_metadata(output_root, jobs[job_id])
 
         executor.submit(run_job)
         return {
@@ -487,27 +495,40 @@ def create_app(
             "result_page": f"/web/result.html?job_id={job_id}",
         }
 
+    @app.get("/api/jobs")
+    def job_list(limit: int = Query(default=20, ge=1, le=100)):
+        items = job_store.list(limit=limit)
+        return {"items": items, "total": len(items), "limit": limit}
+
     @app.get("/api/jobs/{job_id}")
     def job_status(job_id: str):
         with jobs_lock:
             job = dict(jobs.get(job_id) or {})
         if not job:
-            job = _read_job_metadata(output_root, job_id)
+            try:
+                job = job_store.read(job_id)
+            except JobStoreError:
+                raise _job_not_found()
         if not job:
             raise _job_not_found()
-        return _public_job_payload(job)
+        return job_store.public_payload(job)
 
     @app.get("/api/jobs/{job_id}/preview")
     def job_preview(job_id: str):
         with jobs_lock:
             job = dict(jobs.get(job_id) or {})
         if not job:
-            job = _read_job_metadata(output_root, job_id)
+            try:
+                job = job_store.read(job_id)
+            except JobStoreError:
+                raise _job_not_found()
         if not job:
             raise _job_not_found()
         if job.get("status") != "success":
             raise ApiError(400, "job 尚未完成，不能预览", "JobNotReady")
         file_id = str(job.get("file_id") or "")
+        if not file_id and job.get("output_excel_path"):
+            file_id = Path(str(job.get("output_excel_path"))).name
         if not file_id and job.get("output_path"):
             file_id = Path(str(job.get("output_path"))).name
         return _preview_workbook(_safe_download_path(output_root, file_id))

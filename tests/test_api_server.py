@@ -1,3 +1,4 @@
+import json
 import tempfile
 import time
 import unittest
@@ -95,9 +96,13 @@ class ApiServerTests(unittest.TestCase):
 
             job = self._wait_job(client, extract["job_id"])
             self.assertEqual(job["status"], "success")
+            self.assertEqual(job["selected_ids"], ["1"])
             self.assertTrue(job["download_url"].startswith("/api/download/"))
             self.assertIn("%", job["download_url"])
             self.assertTrue(job["preview_url"].endswith("/preview"))
+            metadata_path = Path(tmp) / "jobs" / f"{extract['job_id']}.json"
+            raw_metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+            self.assertEqual(raw_metadata["selected_ids"], ["1"])
 
             preview = client.get(job["preview_url"])
             self.assertEqual(preview.status_code, 200)
@@ -270,6 +275,83 @@ class ApiServerTests(unittest.TestCase):
             self.assertNotIn(str(output_dir), str(restored_payload))
 
             preview = recreated.get(f"/api/jobs/{job_id}/preview")
+            self.assertEqual(preview.status_code, 200)
+            self.assertEqual(len(preview.json()["headers"]), 26)
+
+    def test_extract_defaults_to_service_path_and_lists_jobs(self):
+        from api_server import create_app
+        from excel_writer import write_extraction_workbook
+        from field_mapping import load_field_mapping
+        from services.extraction_service import ExtractionResult
+
+        with tempfile.TemporaryDirectory() as tmp:
+            output_dir = Path(tmp)
+            calls = []
+
+            class FakeService:
+                def run(self, request):
+                    calls.append(request)
+                    output = output_dir / "service_result.xlsx"
+                    logs = output_dir / "logs" / "service"
+                    logs.mkdir(parents=True, exist_ok=True)
+                    summary = logs / "summary.json"
+                    write_extraction_workbook(
+                        [{"info_id": "INFO-SVC"}],
+                        output,
+                        template_path=output_dir / "missing.xlsx",
+                        field_mapping=load_field_mapping(None),
+                    )
+                    summary.write_text(json.dumps({"run_id": "run_service_1"}) + "\n", encoding="utf-8")
+                    return ExtractionResult(
+                        run_id="run_service_1",
+                        input_mode="configured-db",
+                        selected_ids=list(request.selected_ids),
+                        keyword="DATABASE_URL=mysql+pymysql://user:secret@127.0.0.1/db password=abc sk-test-token",
+                        total_records=1,
+                        output_rows=1,
+                        failed_record_count=0,
+                        output_excel_path=output,
+                        summary_path=summary,
+                        log_dir=logs,
+                    )
+
+            client = TestClient(
+                create_app(
+                    extraction_service=FakeService(),
+                    output_dir=output_dir,
+                    log_dir=output_dir / "logs",
+                )
+            )
+
+            created = client.post("/api/extract", json={"selected_ids": ["svc-1"], "mode": "merge", "no_ocr": True}).json()
+            job = self._wait_job(client, created["job_id"])
+            listed = client.get("/api/jobs").json()
+            preview = client.get(job["preview_url"])
+            metadata_path = output_dir / "jobs" / f"{created['job_id']}.json"
+            raw_metadata = metadata_path.read_text(encoding="utf-8")
+            raw_payload = json.loads(raw_metadata)
+
+            self.assertEqual(len(calls), 1)
+            self.assertEqual(calls[0].selected_ids, ["svc-1"])
+            self.assertEqual(calls[0].mode, "merge")
+            self.assertEqual(job["status"], "success")
+            self.assertEqual(job["run_id"], "run_service_1")
+            self.assertEqual(job["input_mode"], "configured-db")
+            self.assertTrue(job["started_at"])
+            self.assertEqual(job["selected_ids"], ["svc-1"])
+            self.assertTrue(raw_payload["started_at"])
+            self.assertEqual(raw_payload["selected_ids"], ["svc-1"])
+            self.assertEqual(listed["total"], 1)
+            self.assertEqual(listed["items"][0]["job_id"], created["job_id"])
+            self.assertEqual(listed["items"][0]["run_id"], "run_service_1")
+            self.assertNotIn(str(output_dir), str(job))
+            self.assertNotIn(str(output_dir), str(listed))
+            self.assertNotIn(str(output_dir), raw_metadata)
+            self.assertNotIn("DATABASE_URL", raw_metadata)
+            self.assertNotIn("mysql+pymysql://user:secret", raw_metadata)
+            self.assertNotIn("secret", raw_metadata)
+            self.assertNotIn("abc", raw_metadata)
+            self.assertNotIn("sk-test-token", raw_metadata)
             self.assertEqual(preview.status_code, 200)
             self.assertEqual(len(preview.json()["headers"]), 26)
 

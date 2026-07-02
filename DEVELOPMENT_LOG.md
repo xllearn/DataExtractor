@@ -668,3 +668,13 @@ Continue optimization on `codex/db-to-excel-extractor`: start the project first,
 - Updated README to recommend the named CLI form while documenting legacy positional compatibility.
 - Red TDD check: `py -m pytest tests/test_quality_eval_cli.py -q` failed as expected with 3 failures for unsupported named/alias arguments and unclear missing-manual handling.
 - Verification: `py -m pytest tests/test_quality_eval_cli.py -q` passed, output `..... [100%]`.
+
+## 2026-07-02 Phase 3 Task 1
+
+- Added `services` with `JobStore`, `RunContext`, and `ExtractionService`.
+- `JobStore` now owns safe job metadata create/update/read/list/delete/archive with atomic JSON writes, safe job ids, relative public paths, and sensitive text filtering.
+- `ExtractionService` runs selected-id configured DB extraction without FastAPI request/response objects, supports fake provider/pipeline/writer injection, calls `pipeline.extract_record_rows`, writes workbook output, and writes `RunSummary` artifacts.
+- `/api/extract` now defaults to the service path when no runner is injected; the legacy subprocess runner remains available through `use_subprocess_runner=True` or explicit `extract_runner`.
+- Added `GET /api/jobs` basic recent-job listing backed by `JobStore`; `GET /api/jobs/{job_id}` and preview recover public metadata through `JobStore`.
+- Red TDD check: `py -m pytest tests/test_job_store.py tests/test_extraction_service.py tests/test_api_server.py -q` failed as expected with 6 failures caused by missing `services` imports.
+- Verification: `py -m pytest tests/test_job_store.py tests/test_extraction_service.py tests/test_api_server.py -q` passed, output `.................. [100%]` with the existing FastAPI/Starlette deprecation warning.
