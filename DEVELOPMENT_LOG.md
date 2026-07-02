@@ -706,3 +706,12 @@ Continue optimization on `codex/db-to-excel-extractor`: start the project first,
 - Added workbench upload controls for `.xlsx` files. The UI uploads first, starts the uploaded job with `upload_id`, stays on the homepage, starts current-job polling, and refreshes history without adding a frontend framework or unsafe DOM writes.
 - Red TDD check: `py -m pytest tests/test_extraction_service.py::test_extraction_service_reads_uploaded_xlsx_records_with_uploaded_input_mode tests/test_api_server.py::ApiServerTests::test_upload_xlsx_creates_uploaded_job_through_service_and_job_endpoints tests/test_api_server.py::ApiServerTests::test_upload_xlsx_rejects_unsafe_extension_and_oversized_body_with_json_errors tests/test_web_app_static.py::WebAppStaticTests::test_index_and_app_js_expose_uploaded_xlsx_job_flow -q` failed as expected with 4 failures for old `input-xlsx`/single-row behavior, missing upload API, missing upload validation, and missing frontend upload UI.
 - Verification: `py -m pytest tests/test_api_server.py tests/test_extraction_service.py tests/test_web_app_static.py -q` passed, output `....................................... [100%]` with the existing FastAPI/Starlette deprecation warning.
+
+## 2026-07-02 Phase 3 Task 5
+
+- Added review workflow APIs: `GET /api/jobs/{job_id}/review-items`, `POST /api/jobs/{job_id}/review-items/{item_id}`, `POST /api/jobs/{job_id}/apply-reviews`, and `GET /api/jobs/{job_id}/reviewed-workbook`.
+- Added `services/review_service.py` to read stable review items from the `人工复核` sheet, persist per-job review state under `output_root/reviews/<job_id>/review_state.json`, mask public text/URLs, and avoid returning absolute paths.
+- `apply-reviews` now creates a separate `_reviewed` workbook without overwriting the source workbook, updates the `人工复核` sheet, writes a `复核日志` sheet, and applies edited values back to `结果数据` when row/field coordinates match.
+- Added API regression tests for stable item IDs, accepted/edited/ignored states, reviewed workbook download, no-path/no-secret responses, JSON errors, and job-not-ready handling.
+- Red TDD check: `py -m pytest tests/test_api_review.py -q` failed as expected with 2 failures because `/api/jobs/{job_id}/review-items` was not implemented.
+- Verification: `py -m pytest tests/test_api_server.py tests/test_extraction_service.py tests/test_web_app_static.py tests/test_core.py tests/test_api_review.py -q` passed, output `.............................................. [100%]` with the existing FastAPI/Starlette deprecation warning.

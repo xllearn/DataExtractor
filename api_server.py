@@ -32,6 +32,7 @@ from services.extraction_service import ExtractionCancelled
 from services.extraction_service import ExtractionRequest as ServiceExtractionRequest
 from services.extraction_service import ExtractionService
 from services.job_store import JobStore, JobStoreError
+from services.review_service import ReviewService, ReviewServiceError
 from utils import ensure_dir
 
 
@@ -63,6 +64,13 @@ class UploadedExtractRequest(BaseModel):
     no_llm: bool = False
     external_ocr_text: str = ""
     prompt_version: str = "v3"
+
+
+class ReviewItemUpdateRequest(BaseModel):
+    status: str = ""
+    action: str = ""
+    reviewed_value: Optional[str] = None
+    comment: str = ""
 
 
 class ApiError(Exception):
@@ -675,6 +683,7 @@ def create_app(
             llm_config_path=llm_config_path,
         )
     job_store = JobStore(output_root)
+    review_service = ReviewService(output_root)
     executor = ThreadPoolExecutor(max_workers=2)
     jobs: dict[str, dict] = {}
     cancelled_jobs: set[str] = set()
@@ -1151,6 +1160,21 @@ def create_app(
             raise _job_not_found()
         return job
 
+    def job_output_workbook_path(job: dict) -> Path:
+        if job.get("status") != "success":
+            raise ApiError(400, "job 尚未成功，不能读取复核工作簿", "JobNotReady")
+        file_id = str(job.get("file_id") or "")
+        if not file_id and job.get("output_excel_path"):
+            file_id = Path(str(job.get("output_excel_path"))).name
+        if not file_id and job.get("output_path"):
+            file_id = Path(str(job.get("output_path"))).name
+        if not file_id:
+            raise ApiError(404, "job 输出 Excel 不存在", "JobWorkbookNotFound")
+        return _safe_download_path(output_root, file_id)
+
+    def raise_review_error(exc: ReviewServiceError) -> None:
+        raise ApiError(exc.status_code, exc.detail, exc.error_type)
+
     @app.get("/api/jobs/{job_id}")
     def job_status(job_id: str):
         job = read_job_or_404(job_id)
@@ -1184,6 +1208,55 @@ def create_app(
         except Exception as exc:
             raise ApiError(500, f"summary 读取失败: {exc}", "SummaryReadError") from exc
         return _safe_summary_payload(payload, output_root, log_root)
+
+    @app.get("/api/jobs/{job_id}/review-items")
+    def job_review_items(job_id: str):
+        job = read_job_or_404(job_id)
+        workbook_path = job_output_workbook_path(job)
+        try:
+            return review_service.list_items(job_id, workbook_path)
+        except ReviewServiceError as exc:
+            raise_review_error(exc)
+
+    @app.post("/api/jobs/{job_id}/review-items/{item_id}")
+    def job_review_item_update(job_id: str, item_id: str, request: ReviewItemUpdateRequest):
+        job = read_job_or_404(job_id)
+        workbook_path = job_output_workbook_path(job)
+        status = request.status or request.action
+        try:
+            return review_service.update_item(
+                job_id,
+                workbook_path,
+                item_id,
+                status=status,
+                reviewed_value=request.reviewed_value,
+                comment=request.comment,
+            )
+        except ReviewServiceError as exc:
+            raise_review_error(exc)
+
+    @app.post("/api/jobs/{job_id}/apply-reviews")
+    def job_apply_reviews(job_id: str):
+        job = read_job_or_404(job_id)
+        workbook_path = job_output_workbook_path(job)
+        try:
+            return review_service.apply_reviews(job_id, workbook_path)
+        except ReviewServiceError as exc:
+            raise_review_error(exc)
+
+    @app.get("/api/jobs/{job_id}/reviewed-workbook")
+    def job_reviewed_workbook(job_id: str):
+        job = read_job_or_404(job_id)
+        job_output_workbook_path(job)
+        try:
+            path = review_service.reviewed_workbook_path(job_id)
+        except ReviewServiceError as exc:
+            raise_review_error(exc)
+        return FileResponse(
+            path,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            filename=path.name,
+        )
 
     @app.get("/api/jobs/{job_id}/download")
     def job_download(job_id: str):
