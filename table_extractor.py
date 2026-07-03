@@ -21,6 +21,7 @@ from field_cleaners import (
     normalize_person_type,
 )
 from table_normalizer import NormalizedTable
+from table_classifier import classify_normalized_table
 
 
 DEDUP_FIELDS = [
@@ -246,9 +247,13 @@ def _extract_from_normalized_tables(
     result = RuleExtractionResult()
     alias_to_header = {**table_mapping.alias_to_header, **field_mapping.alias_to_header}
     for table in normalized_tables:
+        classification = classify_normalized_table(table)
+        headers_text = " | ".join(table.headers)
         for cells in table.rows:
             record: Dict[str, Any] = {}
             extra_notes: List[str] = []
+            row_text = " | ".join(_clean_cell(cell.text) for cell in cells if _clean_cell(cell.text))
+            row_index = cells[0].row_index if cells else ""
             for cell in cells:
                 value = _clean_cell(cell.text)
                 if not value:
@@ -328,7 +333,24 @@ def _extract_from_normalized_tables(
                 for note in extra_notes:
                     record[NOTE_FIELD] = append_note(record.get(NOTE_FIELD), note)
             if record:
-                result.records.append(normalize_record_fields(record, field_mapping))
+                normalized_record = normalize_record_fields(record, field_mapping)
+                normalized_record.update(
+                    {
+                        "_extraction_source": "table",
+                        "_table_index": table.table_index,
+                        "_row_index": row_index,
+                        "_headers": headers_text,
+                        "_caption": table.caption,
+                        "_row_text": row_text,
+                        "_table_type": classification.table_type,
+                        "_table_confidence": classification.confidence,
+                        "_table_confidence_level": classification.confidence_level,
+                        "_table_positive_signals": "; ".join(classification.positive_signals),
+                        "_table_negative_signals": "; ".join(classification.negative_signals),
+                        "_table_reason": classification.reason,
+                    }
+                )
+                result.records.append(normalized_record)
     return result
 
 

@@ -52,6 +52,25 @@ def test_workbook_writes_review_confidence_and_row_match_sheets(tmp_path):
             }
         ],
         row_match_evidence=[{"source_a": "table", "source_b": "llm", "row_a": 1, "row_b": 2, "similarity": 0.8}],
+        candidate_rows=[
+            {
+                "报销比例": "60%",
+                "row_quality_level": "medium",
+                "row_quality_reason": "unknown table kept for manual candidate review",
+                "mapped_values_json": '{"报销比例": "60%"}',
+            }
+        ],
+        low_value_rows=[
+            {
+                "source_id": "S1",
+                "table_type": "contact_table",
+                "row_text": "客服电话 95500",
+                "mapped_values_json": '{"报销比例": "70%"}',
+                "reason": "obvious noise table",
+            }
+        ],
+        result_index_rows=[{"result_row_index": 1, "table_type": "treatment_table", "target_sheet": "main"}],
+        table_classification_rows=[{"table_index": 1, "table_type": "contact_table", "confidence": 0.9}],
     )
 
     wb = load_workbook(out)
@@ -59,8 +78,16 @@ def test_workbook_writes_review_confidence_and_row_match_sheets(tmp_path):
     assert "字段置信度" in wb.sheetnames
     assert "人工复核" in wb.sheetnames
     assert "行匹配证据" in wb.sheetnames
+    assert "结果索引" in wb.sheetnames
+    assert "候选结果" in wb.sheetnames
+    assert "低价值表格行" in wb.sheetnames
+    assert "表格分类" in wb.sheetnames
     assert [cell.value for cell in wb["结果数据"][1]] == EXCEL_HEADERS
     assert len([cell.value for cell in wb["结果数据"][1]]) == 26
+    assert len([cell.value for cell in wb["结果数据"][1]]) == wb["结果数据"].max_column
+    assert "mapped_values_json" in [cell.value for cell in wb["低价值表格行"][1]]
+    assert wb["低价值表格行"].cell(row=2, column=12).value
+    assert wb["候选结果"].cell(row=2, column=19).value == "60%"
     assert [cell.value for cell in wb["字段置信度"][1]] == [
         "row_index",
         "field",

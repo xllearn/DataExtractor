@@ -110,6 +110,88 @@ def test_extraction_service_runs_selected_ids_without_subprocess_or_real_depende
         assert summary["output_rows"] == 1
 
 
+def test_extraction_service_writes_row_quality_metadata_and_summary_metrics():
+    from field_mapping import FieldMapping
+    from services.extraction_service import ExtractionRequest, ExtractionService
+    from utils import EXCEL_HEADERS
+
+    def provider(**_kwargs):
+        return {
+            "items": [
+                {
+                    "_source_id": "R-quality",
+                    "info_id": "INFO-quality",
+                    "Title": "Quality policy",
+                    "SourceURL": "https://example.test/quality",
+                }
+            ],
+            "total": 1,
+        }
+
+    def pipeline(**kwargs):
+        kwargs["metadata"]["collection_logs"].append({"source_id": "R-quality", "status": "success", "output_rows": 1})
+        kwargs["metadata"]["candidate_rows"].append({"source_id": "R-quality", EXCEL_HEADERS[18]: "60%", "mapped_values_json": "{}"})
+        kwargs["metadata"]["low_value_rows"].append({"source_id": "R-quality", "mapped_values_json": "{}", "reason": "contact_table"})
+        kwargs["metadata"]["result_index_rows"].append({"source_id": "R-quality", "target_sheet": "main"})
+        kwargs["metadata"]["table_classification_rows"].append({"source_id": "R-quality", "table_type": "contact_table"})
+        kwargs["metadata"]["row_quality_rows"].extend(
+            [
+                {
+                    "source_id": "R-quality",
+                    "info_id": "INFO-quality",
+                    "title": "Quality policy",
+                    "target_sheet": "main",
+                    "treatment_nonblank_count": 1,
+                    "content_core_nonblank_count": 1,
+                    "has_treatment_context": True,
+                },
+                {
+                    "source_id": "R-quality",
+                    "info_id": "INFO-quality",
+                    "title": "Quality policy",
+                    "target_sheet": "candidate",
+                    "treatment_nonblank_count": 1,
+                    "content_core_nonblank_count": 0,
+                    "has_treatment_context": False,
+                },
+                {
+                    "source_id": "R-quality",
+                    "info_id": "INFO-quality",
+                    "title": "Quality policy",
+                    "target_sheet": "low_value",
+                    "table_type": "contact_table",
+                    "treatment_nonblank_count": 0,
+                    "content_core_nonblank_count": 0,
+                    "has_treatment_context": False,
+                },
+            ]
+        )
+        return [{EXCEL_HEADERS[10]: "参保人", EXCEL_HEADERS[18]: "80%"}]
+
+    writer = CapturingWriter()
+    with tempfile.TemporaryDirectory() as tmp:
+        service = ExtractionService(
+            output_dir=Path(tmp) / "outputs",
+            log_dir=Path(tmp) / "logs",
+            record_provider=provider,
+            pipeline=pipeline,
+            workbook_writer=writer,
+            field_mapping=FieldMapping(),
+        )
+
+        result = service.run(ExtractionRequest(selected_ids=["R-quality"], mode="merge", no_ocr=True, no_llm=True))
+
+        assert writer.calls[0]["candidate_rows"][0]["source_id"] == "R-quality"
+        assert writer.calls[0]["low_value_rows"][0]["mapped_values_json"] == "{}"
+        assert writer.calls[0]["table_classification_rows"][0]["table_type"] == "contact_table"
+        summary = json.loads(result.summary_path.read_text(encoding="utf-8"))
+        assert summary["main_result_rows"] == 1
+        assert summary["candidate_result_rows"] == 1
+        assert summary["low_value_table_rows"] == 1
+        assert summary["useful_main_rows"] == 1
+        assert summary["manual_review_rows_before"] == 78
+
+
 def test_extraction_service_reads_uploaded_xlsx_records_with_uploaded_input_mode():
     from field_mapping import FieldMapping
     from openpyxl import Workbook

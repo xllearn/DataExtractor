@@ -39,6 +39,7 @@ class RunSummary:
     manual_review_records: int = 0
     output_paths: List[Path] = field(default_factory=list)
     failed_records: List[Dict[str, Any]] = field(default_factory=list)
+    row_quality_metrics: Dict[str, Any] = field(default_factory=dict)
 
     def update_input(self, input_mode: str, total_records: int) -> None:
         self.input_mode = input_mode
@@ -79,9 +80,12 @@ class RunSummary:
         if path:
             self.output_paths.append(Path(path))
 
+    def set_row_quality_metrics(self, metrics: Dict[str, Any]) -> None:
+        self.row_quality_metrics = dict(metrics or {})
+
     def _payload(self) -> Dict[str, Any]:
         finished_at = _now_iso()
-        return {
+        payload = {
             "run_id": self.run_id,
             "started_at": self.started_at,
             "finished_at": finished_at,
@@ -99,6 +103,8 @@ class RunSummary:
             "output_excel_paths": [str(path) for path in self.output_paths],
             "log_dir": str(self.log_dir),
         }
+        payload.update(self.row_quality_metrics)
+        return payload
 
     def write_artifacts(self) -> Dict[str, Any]:
         ensure_dir(self.log_dir)

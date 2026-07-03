@@ -13,6 +13,7 @@ from input_xlsx import read_records_from_xlsx
 from keyword_utils import expand_keyword_groups
 from llm_client import LLMClient
 from pipeline import create_empty_metadata, extract_record_rows
+from row_quality import build_row_quality_summary
 from run_summary import RunSummary
 from security_utils import mask_sensitive_text
 from table_extractor import load_table_mapping
@@ -195,6 +196,7 @@ class ExtractionService:
                     self._write_workbook(output_path, [*rows], field_mapping, record_metadata)
                     output_paths.append(output_path)
                     summary.add_output_path(output_path)
+                    _extend_metadata(all_metadata, record_metadata)
                 else:
                     all_rows.extend(rows)
                     _extend_metadata(all_metadata, record_metadata)
@@ -245,6 +247,7 @@ class ExtractionService:
             output_paths.append(output_path)
             summary.add_output_path(output_path)
 
+        summary.set_row_quality_metrics(build_row_quality_summary(all_metadata))
         summary_payload = summary.write_artifacts()
         output_excel_path = output_paths[-1] if output_paths else Path("")
         result = ExtractionResult(
@@ -292,6 +295,10 @@ class ExtractionService:
             field_confidence=metadata["field_confidence"],
             review_rows=metadata["review_rows"],
             row_match_evidence=metadata["row_match_evidence"],
+            candidate_rows=metadata.get("candidate_rows", []),
+            low_value_rows=metadata.get("low_value_rows", []),
+            result_index_rows=metadata.get("result_index_rows", []),
+            table_classification_rows=metadata.get("table_classification_rows", []),
         )
 
     def _create_vision_client(self, logger: logging.Logger):

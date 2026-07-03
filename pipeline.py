@@ -16,8 +16,10 @@ from llm_extractor import LlmExtractionResult, extract_with_llm, llm_result_to_f
 from prompts import build_extract_prompt
 from prompt_registry import build_prompt, hash_text
 from record_fusion import fuse_record_sources
+from row_quality import split_rows_by_quality
 from rule_extractor import extract_key_value_records
 from security_utils import mask_sensitive_text
+from table_classifier import classify_normalized_table, table_classification_row
 from table_extractor import extract_table_records
 from utils import append_jsonl, ensure_dir
 
@@ -74,6 +76,25 @@ def _append_confidence_metadata(
     metadata["review_rows"].extend(review_rows)
 
 
+def _extend_quality_metadata(metadata: Dict[str, List[Dict[str, Any]]], split: Dict[str, List[Dict[str, Any]]]) -> None:
+    metadata["candidate_rows"].extend(split.get("candidate_rows", []))
+    metadata["low_value_rows"].extend(split.get("low_value_rows", []))
+    metadata["result_index_rows"].extend(split.get("result_index_rows", []))
+    metadata["row_quality_rows"].extend(split.get("row_quality_rows", []))
+
+
+def _table_classification_metadata(parsed, source_id: str, info_id: str, record: Dict[str, Any]) -> List[Dict[str, Any]]:
+    source = {
+        "source_id": source_id,
+        "info_id": info_id,
+        "title": record.get("Title") or record.get("title") or "",
+    }
+    rows: List[Dict[str, Any]] = []
+    for table in getattr(parsed, "normalized_tables", []) or []:
+        rows.append(table_classification_row(source, table, classify_normalized_table(table)))
+    return rows
+
+
 def create_empty_metadata() -> Dict[str, List[Dict[str, Any]]]:
     return {
         "collection_logs": [],
@@ -84,6 +105,11 @@ def create_empty_metadata() -> Dict[str, List[Dict[str, Any]]]:
         "field_confidence": [],
         "review_rows": [],
         "row_match_evidence": [],
+        "candidate_rows": [],
+        "low_value_rows": [],
+        "result_index_rows": [],
+        "table_classification_rows": [],
+        "row_quality_rows": [],
     }
 
 
@@ -221,6 +247,7 @@ def extract_record_rows(
     logger.info("图片数量: %s", len(parsed.image_urls))
     source_id = str(record.get("_source_id") or record.get("SourceURL") or record_index)
     info_id = str(record.get("info_id") or (record.get("_direct_fields") or {}).get("info_id") or "")
+    metadata["table_classification_rows"].extend(_table_classification_metadata(parsed, source_id, info_id, record))
     ocr_status = ocr_status or get_ocr_status()
     external_ocr_text = str(external_ocr_text or "").strip()
 
@@ -289,7 +316,8 @@ def extract_record_rows(
         initial_llm_evidence,
         field_mapping,
     )
-    initial_rows = initial_fusion.records
+    initial_split = split_rows_by_quality(initial_fusion.records, record=record, field_mapping=field_mapping)
+    initial_rows = initial_split["main_rows"]
     initial_field_evidence = _with_context([*initial_fusion.field_evidence, *external_ocr_evidence], record_index, "initial")
     initial_conflicts = _with_context(initial_fusion.conflict_evidence, record_index, "initial")
     initial_row_match_evidence = _with_context(initial_fusion.row_match_evidence, record_index, "initial")
@@ -334,6 +362,7 @@ def extract_record_rows(
         metadata["conflict_evidence"].extend(initial_conflicts)
         metadata["row_match_evidence"].extend(initial_row_match_evidence)
         metadata["extract_evaluations"].extend(initial_eval_payloads)
+        _extend_quality_metadata(metadata, initial_split)
         metadata["collection_logs"].append(
             {
                 "source_id": source_id,
@@ -390,6 +419,8 @@ def extract_record_rows(
                     "text_rule_records": text_rule_result.records,
                     "llm_raw_output": initial_llm_result.raw_output,
                     "fused_records": initial_rows,
+                    "candidate_records": initial_split["candidate_rows"],
+                    "low_value_records": initial_split["low_value_rows"],
                     "evaluations": initial_evals,
                 },
             )
@@ -415,6 +446,7 @@ def extract_record_rows(
         metadata["conflict_evidence"].extend(initial_conflicts)
         metadata["row_match_evidence"].extend(initial_row_match_evidence)
         metadata["extract_evaluations"].extend([*initial_eval_payloads, *failed_eval_payloads])
+        _extend_quality_metadata(metadata, initial_split)
         retry_context = ImageTableContext(
             external_ocr_used=external_ocr_used,
             vision_enabled=image_context.vision_enabled,
@@ -476,6 +508,8 @@ def extract_record_rows(
                     "text_rule_records": text_rule_result.records,
                     "llm_raw_output": initial_llm_result.raw_output,
                     "fused_records": initial_rows,
+                    "candidate_records": initial_split["candidate_rows"],
+                    "low_value_records": initial_split["low_value_rows"],
                     "evaluations": initial_evals,
                     "ocr_failure_count": ocr_summary.failure_count,
                     "ocr_errors": getattr(ocr_summary, "errors", []) or [],
@@ -498,7 +532,8 @@ def extract_record_rows(
         retry_llm_evidence,
         field_mapping,
     )
-    retry_rows = retry_fusion.records
+    retry_split = split_rows_by_quality(retry_fusion.records, record=record, field_mapping=field_mapping)
+    retry_rows = retry_split["main_rows"]
     retry_evals = evaluate_rows(
         retry_rows,
         record,
@@ -512,7 +547,8 @@ def extract_record_rows(
     retry_score = _score_from_evals(retry_evals)
     initial_score = _score_from_evals(initial_evals)
     final_attempt = choose_final_attempt(initial_score, retry_score, retry_llm_result.parse_error, retry_rows)
-    final_rows = retry_rows if final_attempt == "ocr_retry" else initial_rows
+    final_split = retry_split if final_attempt == "ocr_retry" else initial_split
+    final_rows = final_split["main_rows"]
     final_fusion = retry_fusion if final_attempt == "ocr_retry" else initial_fusion
     retry_field_evidence = _with_context(retry_fusion.field_evidence, record_index, "ocr_retry")
     retry_conflicts = _with_context(retry_fusion.conflict_evidence, record_index, "ocr_retry")
@@ -524,6 +560,7 @@ def extract_record_rows(
     metadata["conflict_evidence"].extend([*initial_conflicts, *retry_conflicts])
     metadata["row_match_evidence"].extend([*initial_row_match_evidence, *retry_row_match_evidence])
     metadata["extract_evaluations"].extend([*initial_eval_payloads, *retry_eval_payloads])
+    _extend_quality_metadata(metadata, final_split)
     retry_context = ImageTableContext(
         external_ocr_used=external_ocr_used,
         vision_enabled=image_context.vision_enabled,
@@ -589,6 +626,8 @@ def extract_record_rows(
                 "text_rule_records": text_rule_result.records,
                 "llm_raw_output": retry_llm_result.raw_output,
                 "fused_records": final_rows,
+                "candidate_records": final_split["candidate_rows"],
+                "low_value_records": final_split["low_value_rows"],
                 "evaluations": [*initial_evals, *retry_evals],
                 "ocr_errors": getattr(ocr_summary, "errors", []) or [],
             },

@@ -13,7 +13,25 @@ from utils import EXCEL_HEADERS, build_single_filename, ensure_dir
 
 
 LONG_TEXT_HEADERS = {"个人账户计入办法", "个人账户使用范围", "备注", "相关资讯"}
-TARGET_SHEETS = {"结果数据", "采集日志", "字段证据", "冲突证据", "抽取评估", "失败记录", "字段置信度", "人工复核", "行匹配证据"}
+RESULT_INDEX_SHEET = "结果索引"
+CANDIDATE_RESULT_SHEET = "候选结果"
+LOW_VALUE_TABLE_ROW_SHEET = "低价值表格行"
+TABLE_CLASSIFICATION_SHEET = "表格分类"
+TARGET_SHEETS = {
+    "结果数据",
+    "采集日志",
+    "字段证据",
+    "冲突证据",
+    "抽取评估",
+    "失败记录",
+    "字段置信度",
+    "人工复核",
+    "行匹配证据",
+    RESULT_INDEX_SHEET,
+    CANDIDATE_RESULT_SHEET,
+    LOW_VALUE_TABLE_ROW_SHEET,
+    TABLE_CLASSIFICATION_SHEET,
+}
 
 
 def _new_or_template_workbook(template_path: Path) -> Workbook:
@@ -54,6 +72,10 @@ def write_extraction_workbook(
     field_confidence: List[Dict[str, Any]] | None = None,
     review_rows: List[Dict[str, Any]] | None = None,
     row_match_evidence: List[Dict[str, Any]] | None = None,
+    candidate_rows: List[Dict[str, Any]] | None = None,
+    low_value_rows: List[Dict[str, Any]] | None = None,
+    result_index_rows: List[Dict[str, Any]] | None = None,
+    table_classification_rows: List[Dict[str, Any]] | None = None,
 ) -> Path:
     output_path = Path(output_path)
     ensure_dir(output_path.parent)
@@ -74,6 +96,10 @@ def write_extraction_workbook(
         write_dict_sheet(workbook, "人工复核", review_rows, REVIEW_ROW_HEADERS)
     if row_match_evidence is not None:
         write_dict_sheet(workbook, "行匹配证据", row_match_evidence, ROW_MATCH_HEADERS)
+    write_dict_sheet(workbook, RESULT_INDEX_SHEET, result_index_rows or [], RESULT_INDEX_HEADERS)
+    write_dict_sheet(workbook, CANDIDATE_RESULT_SHEET, candidate_rows or [], [*field_mapping.headers, *CANDIDATE_EXTRA_HEADERS])
+    write_dict_sheet(workbook, LOW_VALUE_TABLE_ROW_SHEET, low_value_rows or [], LOW_VALUE_HEADERS)
+    write_dict_sheet(workbook, TABLE_CLASSIFICATION_SHEET, table_classification_rows or [], TABLE_CLASSIFICATION_HEADERS)
     write_dict_sheet(workbook, "失败记录", failed_records or [], FAILED_RECORD_HEADERS)
 
     workbook.save(output_path)
@@ -249,6 +275,67 @@ REVIEW_ROW_HEADERS = [
 ]
 ROW_MATCH_HEADERS = ["record_index", "attempt", "source_a", "source_b", "row_a", "row_b", "similarity", "matched_fields", "reason", "candidate_index"]
 FAILED_RECORD_HEADERS = ["phase", "record_index", "source_id", "info_id", "Title", "SourceURL", "error"]
+RESULT_INDEX_HEADERS = [
+    "result_row_index",
+    "source_id",
+    "info_id",
+    "title",
+    "source_url",
+    "extraction_source",
+    "table_index",
+    "row_index",
+    "table_type",
+    "table_confidence",
+    "table_confidence_level",
+    "row_quality_level",
+    "row_quality_reason",
+    "has_treatment_context_source",
+    "target_sheet",
+]
+CANDIDATE_EXTRA_HEADERS = [
+    "row_quality_level",
+    "row_quality_reason",
+    "has_treatment_context",
+    "has_treatment_context_source",
+    "table_type",
+    "table_confidence",
+    "table_confidence_level",
+    "source_id",
+    "info_id",
+    "title",
+    "source_url",
+    "mapped_values_json",
+]
+LOW_VALUE_HEADERS = [
+    "source_id",
+    "info_id",
+    "title",
+    "source_url",
+    "table_index",
+    "row_index",
+    "table_type",
+    "table_confidence",
+    "table_confidence_level",
+    "headers",
+    "row_text",
+    "mapped_values_json",
+    "reason",
+]
+TABLE_CLASSIFICATION_HEADERS = [
+    "source_id",
+    "info_id",
+    "title",
+    "table_index",
+    "table_type",
+    "confidence",
+    "confidence_level",
+    "positive_signals",
+    "negative_signals",
+    "reason",
+    "headers",
+    "caption",
+    "row_count",
+]
 
 
 def write_dict_sheet(workbook, title: str, rows: List[Dict[str, Any]], headers: List[str]) -> None:

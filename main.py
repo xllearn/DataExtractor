@@ -14,6 +14,7 @@ from input_xlsx import read_records_from_xlsx
 from keyword_utils import expand_keyword_groups
 from llm_client import LLMClient
 from pipeline import create_empty_metadata, extract_record_rows
+from row_quality import build_row_quality_summary
 from run_summary import RunSummary
 from runtime import (
     external_ocr_for_record,
@@ -243,6 +244,10 @@ def main() -> int:
                         field_confidence=record_metadata["field_confidence"],
                         review_rows=record_metadata["review_rows"],
                         row_match_evidence=record_metadata["row_match_evidence"],
+                        candidate_rows=record_metadata["candidate_rows"],
+                        low_value_rows=record_metadata["low_value_rows"],
+                        result_index_rows=record_metadata["result_index_rows"],
+                        table_classification_rows=record_metadata["table_classification_rows"],
                     )
                 except Exception as exc:
                     masked_error = mask_sensitive_text(str(exc))
@@ -265,6 +270,8 @@ def main() -> int:
                 logger.info("Excel 输出路径: %s", output_path)
                 output_paths.append(output_path)
                 summary.add_output_path(output_path)
+                for key in all_metadata:
+                    all_metadata[key].extend(record_metadata[key])
             else:
                 all_rows.extend(rows)
                 for key in all_metadata:
@@ -320,6 +327,10 @@ def main() -> int:
                 field_confidence=all_metadata["field_confidence"],
                 review_rows=all_metadata["review_rows"],
                 row_match_evidence=all_metadata["row_match_evidence"],
+                candidate_rows=all_metadata["candidate_rows"],
+                low_value_rows=all_metadata["low_value_rows"],
+                result_index_rows=all_metadata["result_index_rows"],
+                table_classification_rows=all_metadata["table_classification_rows"],
             )
         except Exception as exc:
             masked_error = mask_sensitive_text(str(exc))
@@ -331,6 +342,7 @@ def main() -> int:
         output_paths.append(output_path)
         summary.add_output_path(output_path)
 
+    summary.set_row_quality_metrics(build_row_quality_summary(all_metadata))
     _write_summary(summary, logger)
     logger.info("任务结束，输出文件数: %s, 单条失败数: %s", len(output_paths), record_error_count)
     for path in output_paths:

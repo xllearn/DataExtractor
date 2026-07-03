@@ -1,5 +1,18 @@
 # DataExtractor Development Log
 
+## 2026-07-03
+
+### Row quality filtering and noisy table isolation
+
+- Added row-quality scoring after extraction/fusion and before Excel, summary, confidence, review, and evidence aggregation.
+- Added table classification for treatment, coverage, premium, co-insurer, FAQ, contact, directory, timeline, marketing, and unknown tables.
+- Split fused rows into `main_rows`, `candidate_rows`, and `low_value_rows`; `结果数据` now receives only main rows with the fixed 26-column schema.
+- Added Excel sheets for `结果索引`, `候选结果`, `低价值表格行`, and `表格分类` to preserve traceability without polluting the main result sheet.
+- Added summary metrics for main/candidate/low-value row counts, useful-row ratio, row-noise ratio, noisy-record ranking, and manual-review rows before/after filtering.
+- Preserved table metadata through fusion so table type, confidence, row text, source row, and mapped values are available in evidence sheets.
+- Added regression coverage for large noisy tables and focused tests for classifier, row-quality split, Excel output, and service summary metadata.
+- Verification: focused compile passed with `.\.venv_ocr\Scripts\python.exe -m compileall`; `pytest` is not installed in `.venv_ocr`, so a manual pytest-style runner passed 18 focused tests; CLI smoke passed with `--no-llm --no-ocr` and confirmed `结果数据` kept the fixed 26 columns.
+
 ## 2026-07-02
 
 ### A2 upload streaming and productized version

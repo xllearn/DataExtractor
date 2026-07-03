@@ -390,8 +390,22 @@ def _merge_row(
     normalized_chosen = normalize_record_fields(chosen, field_mapping)
     final_row = apply_direct_fields(normalized_chosen, record, field_mapping)
     final_row, final_conflicts = _sanitize_final_row(record, final_row, field_mapping, row_index)
+    final_row.update(_source_metadata(source_rows))
     conflicts.extend(final_conflicts)
     return final_row, conflicts
+
+
+def _source_metadata(source_rows: List[tuple[str, Dict[str, Any]]]) -> Dict[str, Any]:
+    metadata: Dict[str, Any] = {}
+    for source, row in source_rows:
+        if not row:
+            continue
+        for key, value in row.items():
+            if str(key).startswith("_") and value not in (None, "") and key not in metadata:
+                metadata[key] = value
+        if source and "_extraction_source" not in metadata and any(str(key).startswith("_table_") for key in row):
+            metadata["_extraction_source"] = source
+    return metadata
 
 
 def fuse_record_sources(
